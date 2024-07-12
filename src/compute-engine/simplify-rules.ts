@@ -34,24 +34,239 @@ export const SIMPLIFY_RULES: Rule[] = [
   'x^a * x^b -> x^{a+b}',
   'x^n^m -> x^{n * m}',
 
+  //Duplicate Simplifications
+  '\\log(\\exp(x)^y) -> y * x', //from '\\log(\\exp(x)) -> x' and '\\log(x^n) -> n \\log(x)'
+  '\\log(\\exp(x) * y) -> x + \\log(y)', //from   '\\log(xy) -> \\log(x) + \\log(y)' and '\\log(\\exp(x)) -> x',
+  '\\log(\\exp(x) / y) -> x - \\log(y)', //from   '\log(\frac{x}{y}) -> \log(x) - \log(y)' and '\\log(\\exp(x)) -> x',
+  '\\exp(\\log(x) * \\log(y)) -> x^\\log(y)', //from '\\exp(\\log(x) * y) -> x^y',
+  '\\exp(\\log(x) / \\log(y)) -> x^{1/\\log(y)}', //from '\\exp(\\log(x) / y) -> x^(1/y)',
+
   // Exponential and logarithms
   '\\log(xy) -> \\log(x) + \\log(y)',
   '\\log(x^n) -> n \\log(x)',
   '\\log(\\frac{x}{y}) -> \\log(x) - \\log(y)',
-  '\\log(\\exp(x) * y) -> x + \\log(y)',
-  '\\log(\\exp(x) / y) -> x - \\log(y)',
-  '\\log(\\exp(x)^y) -> y * x',
   '\\log(\\exp(x)) -> x',
+  '\\log(0) -> NaN',
+  '\\log(1) -> 0',
+  '\\log(\\sqrt{x})->\\frac{1}{2}\\log(x)',
+  '\\log(\\sqrt[y]{x})->\\frac{1}{y}\\log(x)',
 
   '\\exp(x) * \\exp(y) -> \\exp(x + y)',
+  '\\exp(x)/\\exp(y) -> \\exp(x-y)',
   '\\exp(x)^n -> \\exp(n x)',
   '\\exp(\\log(x)) -> x',
-  '\\exp(\\log(x) + y) -> x * \\exp(y)',
-  '\\exp(\\log(x) - y) -> x / \\exp(y)',
   '\\exp(\\log(x) * y) -> x^y',
   '\\exp(\\log(x) / y) -> x^(1/y)',
-  '\\exp(\\log(x) * \\log(y)) -> x^\\log(y)',
-  '\\exp(\\log(x) / \\log(y)) -> x^{1/\\log(y)}',
+
+  //Miscellaneous
+  {match:'(\\frac{a}{x})^{-1}',replace:'\\frac{x}{a}',condition:'x!=0'},
+  {match:'x^n/x',replace:'x^{n-1}',condition:'x!=0'},
+  {match:'x^n/x',replace:'x^{n-1}',condition:'x!=0'},
+  {match:'x^n/x',replace:'x^{n+1}',condition:'n<1'},
+  {match:'x^nx',replace:'x^{n+1}',condition:'x!=0'},
+  {match:'x^nx',replace:'x^{n+1}',condition:'n>0'},
+  {match:'x^nx',replace:'x^{n+1}',condition:'n<-1'},
+  'xx->x^2',
+  {match:'\\frac{a}{b}',replace:'NaN',condition:'b==0'},
+
+  //Minus Signs
+  '(-a)/b->-(a/b)',
+  '-(-a)/b->a/b',
+  '(-x)(-y)->xy',
+
+  //Powers with Base 0
+  '0^0->NaN',
+  {match:'0^a',replace:'0',condition:'a>0'},
+  // {match:'0^n',replace:'\\infty',condition:'n<0 and n is an even integer'},
+  {match:'0^n',replace:'\\infty',condition:'n<0 and n a rational number with even numerator and odd denominator'},
+  {match:'0^n',replace:'NaN',condition:'n<0 and n is not a rational number'},
+  {match:'0^n',replace:'NaN',condition:'n<0 and n is a rational number with and odd numerator'},
+
+  //ABSOLUTE VALUE
+
+  //Basic
+  '|-x|->|x|',
+  {match:'|x|',replace:'x',condition:'x>=0'},
+  {match:'|x|',replace:'-x',condition:'x<=0'},
+  {match:'|xy|',replace:'x|y|',condition:'x>=0'},
+  {match:'|xy|',replace:'-x|y|',condition:'x<=0'},
+  {match:'|\\frac{x}{y}|',replace:'\\frac{x}{|y|}',condition:'x>=0'},
+  {match:'|\\frac{x}{y}|',replace:'-\\frac{x}{|y|}',condition:'x<=0'},
+
+  //Powers and Absolute Value
+  //{match:'|x|^n',replace:'x^n',condition:'n is an even integer'}, commented out because don't know how to test for even integer
+  // {match:'|x|^{\frac{n}{m}}',replace:'x^{\frac{n}{m}}',condition:'n is an even integer and m is an odd integer'}
+  // {match:'|x^n|', replace:'|x|^n',condition:'n is not an even integer or a rational with even numerator and odd denominator'},
+
+  //Even Functions and Absolute Value
+  '\\cos(|x|)->\\cos(x)',
+  '\\sec(|x|)->\\sec(x)',
+  '\\cosh(|x|)->\\cosh(x)',
+  '\\sech(|x|)->\\sech(x)',
+
+  //Odd functions and Absolute Value
+  '|\\sin(x)|->\\sin(|x|)',
+  '|\\tan(x)|->\\tan(|x|)',
+  '|\\cot(x)|->\\cot(|x|)',
+  '|\\csc(x)|->\\csc(|x|)',
+  '|\\arcsin(x)|->\\arcsin(|x|)',
+  '|\\arctan(x)|->\\arctan(|x|)',
+  '|\\arccot(x)|->\\arccot(|x|)',
+  '|\\arccsc(x)|->\\arccsc(|x|)',
+  '|\\sinh(x)|->\\sinh(|x|)',
+  '|\\tanh(x)|->\\tanh(|x|)',
+  '|\\coth(x)|->\\coth(|x|)',
+  '|\\csch(x)|->\\csch(|x|)',
+  '|\\arcsinh(x)|->\\arcsinh(|x|)',
+  '|\\arctanh(x)|->\\arctanh(|x|)',
+  '|\\arccoth(x)|->\\arccoth(|x|)',
+  '|\\arccsch(x)|->\\arccsch(|x|)',
+
+  //COMMON DENOMINATOR
+  '\\frac{a}{b}+\\frac{c}{d}->\\frac{ad+bc}{bd}',
+  '\\frac{a}{b}-\\frac{c}{d}->\\frac{ad-bc}{bd}',
+  '-\\frac{a}{b}-\\frac{c}{d}->\\frac{-ad-bc}{bd}',
+  '\\frac{a}{b}+\\frac{c}{b}->\\frac{a+c}{b}',
+  '\\frac{a}{b}-\\frac{c}{b}->\\frac{a-c}{b}',
+  '\\frac{a}{b}+c->\\frac{a+bc}{b}',
+  '-\\frac{a}{b}+c->\\frac{-a+bc}{b}',
+
+  //INFINITY
+  //Base of Infinity
+  {match:'\\infty^a',replace:'\\infty',condition:'a>0'},
+  {match:'\\infty^a',replace:'0',condition:'a<0'},
+  {match:'(-\\infty)^a',replace:'0',condition:'a<0'},
+  '\\infty^0->NaN',
+  // {match:'(-\infty)^n',replace:'\infty',condition:'a is a even integer'},
+  // {match:'(-\infty)^{n/m}',replace:'\infty',condition:'n is an even integer and m is an odd integer'},
+  // {match:'(-\infty)^n',replace:'-\infty',condition:'a is an odd integer'},
+  // {match:'(-\infty)^{n/m}',replace:'\infty',condition:'n is an odd integer and m is an odd integer'},
+
+  //Division Involving Infinity
+  '\\frac{\\infty}{\\infty}->NaN',
+  '\\frac{-\\infty}{\\infty}->NaN', //might be duplicate
+  '\\frac{\\infty}{-\\infty}->NaN', //might be duplicate
+  '\\frac{-\\infty}{-\\infty}->NaN', //might be duplicate
+
+  //Multiplication Involving Infinity
+  {match:'\\infty\\cdot a',replace:'\\infty',condition:'a>0'},
+  {match:'\\infty\\cdot a',replace:'=\\infty',condition:'a<0'},
+  {match:'\\infty\\cdot a',replace:'NaN',condition:'a==0'},
+
+  //Division Involving Infinity
+  {match:'\\frac{\\infty}{a}',replace:'\\infty',condition:'a>0'},
+  {match:'\\frac{\\infty}{a}',replace:'-\\infty',condition:'a<0'},
+  {match:'\\frac{-\\infty}{a}',replace:'-\\infty',condition:'a>0'},
+  {match:'\\frac{-\\infty}{a}',replace:'\\infty',condition:'a<0'},
+
+  //Power of Infinity
+  {match:'a^\\infty',replace:'\\infty',condition:'a>1'},
+  {match:'a^\\infty',replace:'0',condition:'0<a<1'},
+  {match:'a^{-\\infty}',replace:'0',condition:'a>1'},
+  {match:'a^{-\\infty}',replace:'\\infty',condition:'0<a<1'},
+  '1^\\infty->NaN',
+  '\\exp(\\infty)->\\infty',
+  '\\exp(-\\infty)->0',
+
+  //Log of Infinity
+  '\\log(\\infty)->\\infty',
+  '\\ln(\\infty)->\\infty',
+
+  //Trig Functions at Infinity
+  '\\sin(\\infty)->NaN',
+  '\\cos(\\infty)->NaN',
+  '\\tan(\\infty)->NaN',
+  '\\cot(\\infty)->NaN',
+  '\\sec(\\infty)->NaN',
+  '\\csc(\\infty)->NaN',
+  '\\sin(-\\infty)->NaN',
+  '\\cos(-\\infty)->NaN',
+  '\\tan(-\\infty)->NaN',
+  '\\cot(-\\infty)->NaN',
+  '\\sec(-\\infty)->NaN',
+  '\\csc(-\\infty)->NaN',
+
+  //Inverse Trig Functions at Infinity
+  '\\arcsin(\\infty)->NaN',
+  '\\arccos(\\infty)->NaN',
+  '\\arcsin(-\\infty)->NaN',
+  '\\arccos(-\\infty)->NaN',
+  '\\arctan(\\infty)->\\frac{\\pi}{2}',
+  '\\arctan(-\\infty)->-\\frac{\\pi}{2}',
+  '\\arccot(\\infty)->0',
+  '\\arccot(-\\infty)->\\pi',
+  '\\arcsec(\\infty)->\\frac{\\pi}{2}',
+  '\\arcsec(-\\infty)->\\frac{\\pi}{2}',
+  '\\arccsc(\\infty)->0',
+  '\\arccsc(-\\infty)->0',
+
+  //Hyperbolic Trig Functions At Infinity
+  '\\sinh(\\infty)->\\infty',
+  '\\sinh(-\\infty)->-\\infty',
+  '\\cosh(\\infty)->\\infty',
+  '\\cosh(-\\infty)->\\infty',
+  '\\tanh(\\infty)->1',
+  '\\tanh(-\\infty)->-1',
+  '\\coth(\\infty)->1',
+  '\\coth(-\\infty)->-1',
+  '\\sech(\\infty)->0',
+  '\\sech(-\\infty)->0',
+  '\\csch(\\infty)->0',
+  '\\csch(-\\infty)->0',
+
+  //Inverse Hyeperbolic Trig Functions At Infinity
+  '\\arcsinh(\\infty)->\\infty',
+  '\\arcsinh(-\\infty)->-\\infty',
+  '\\arccosh(\\infty)->\\infty',
+  '\\arccosh(-\\infty)->NaN',
+  '\\arctanh(\\infty)->NaN',
+  '\\arctanh(-\\infty)->NaN',
+  '\\arccoth(\\infty)->NaN',
+  '\\arccoth(-\\infty)->NaN',
+  '\\arcsech(\\infty)->NaN',
+  '\\arcsech(-\\infty)->NaN',
+  '\\arccsch(\\infty)->0',
+  '\\arccsch(-\\infty)->0',
+
+  //LOGS OF BASE NOT E
+
+  //Undefined
+  {match:'\\log_c(a)',replace:'NaN',condition:'c==1'},
+  {match:'\\log_c(a)',replace:'NaN',condition:'c<=0'},
+  '\\log_c(0)->NaN',
+
+  //Simple
+  '\\log_c(c)->1',
+  '\\log_c(c^a)->a',
+
+  //Base of C
+  'c^{\\log_c(a)}->a',
+  'c^{b\\log_c(a)}->a^b',
+  'c^{\\log_c(a)+b}->a\\cdot c^b',
+  'c^{\\log_c(a)-b}->\\frac{a}{c^b}',
+  'c^{d\\log_c(a)+b}->a^d\\cdot c^b',
+  'c^{\\log_c(a)-b}->\\frac{a^d}{c^b}',
+  'c^{-\\log_c(a)-b}->\\frac{1}{a^dc^b}',
+  'c^{-\\log_c(a)+b}->\\frac{b^c}{a^d}',
+
+  //Log Properties
+  '\\log_c(ab)->\\log_c(a)+\\log_c(b)',
+  '\\log_c(\\frac{a}{b})->\\log_c(a)-\\log_c(b)',
+  '\\log_c(\\frac{1}{b})=-\\log_c(b)',
+  '\\log_c(c^ab)->a+\\log_c(b)',
+  '\\log_c(\\frac{c^a}{b})->a-\\log_c(b)',
+  '\\log_c(\\frac{b}{c^a})->\\log_c(b)-a',
+  '\\log_c(b^a)->a\\log_c(b)',
+
+  //Change of Base
+  '\\log_c(b)\\ln(c)->\\ln(b)',
+  '\\frac{\\log_c(b)}{\\log_d(b)}->\\frac{\\ln(d)}{\\ln(c)}',
+  '\\log_{1/c}(b)->-\\log_c(b)',
+
+
+  //At Infinity
+  {match:'\\log_c(\\infty)',replace:'\\infty',condition:'c>1'},
+  {match:'\\log_c(\\infty)',replace:'-\\infty',condition:'0<c<1'},
 
   // Trigonometric
   '\\sin(-x) -> -\\sin(x)',
