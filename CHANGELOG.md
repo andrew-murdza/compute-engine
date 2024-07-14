@@ -1,24 +1,99 @@
 ## [Unreleased]
 
-### New Features
+### Breaking Changes
 
-- The `expr.toString()` method now returns a serialization of the expression
-  using the [AsciiMath](https://asciimath.org/) format.
+- The methods for algebraic operations (`add`, `div`, `mul`, etc...) have been
+  moved from the Compute Engine to the Boxed Expression class. Instead of
+  calling `ce.add(a, b)`, call `a.add(b)`.
+
+  Those methods also behave more consistently: they apply some additional
+  simplication rules over canonicalization. For example, while
+  `ce.parse('1 + 2')` return `["Add", 1, 2]`, `ce.box(1).add(2)` will return
+  `3`.
+
+### New Features and Improvements
+
+- **Exact calculations**
+
+  The Compute Engine attempts to perform exact calculations when possible.
+
+  For example `1/2 + 1/3` is evaluated to `5/6` instead of `0.8(3)`.
+
+  To get an approximate result, use the `N()` method, for example
+  `ce.parse("\\frac12 + \\frac13").N()`.
+
+  Previously the result of calculations was not always an exact number but
+  returned a numerical approximation instead.
+
+  This has now been improved by introducing internally a `NumericValue` type
+  that encapsulates exact numbers and by doing all calculations in this type.
+  Previously the calculations were handled manually in the various evaluation
+  functions. This made the code complicated and error prone.
+
+  Since the Compute Engine supports multiple numeric mode, including
+  fixed-precision and arbitrary precision, the special cases that had to be
+  handled could be quite complicated. By using the `NumericValue` type, the code
+  is simpler and more robust.
+
+  A `NumericValue` is made of:
+
+  - an imaginary part, represented as a fixed-precision number
+  - a real part, represented either as a fixed or arbitrary precision number or
+    as the product of a rational number and the square root of an integer.
+
+  For example:
+
+  - 234.567
+  - 1/2
+  - 3√5
+  - √7/3
+  - 4-3i
+
+  While this is a significant change internally, the API remains the same. The
+  result of calculations should be more predictable and more accurate.
+
+  In the future, the `numericValue` property may change to return a
+  `NumericValue` object.
+
+- Improved results for `Expand`. In some cases the expression was not fully
+  expanded. For example, `4x(3x+2)-5(5x-4)` now returns `12x^2 - 17x + 20`.
+  Previously it returned `4x(3x+2)+25x-20`.
+
+- **AsciiMath serialization** The `expr.toString()` method now returns a
+  serialization of the expression using the [AsciiMath](https://asciimath.org/)
+  format.
+
+  The serialization to AsciiMath can be customized using the `toAsciiMath()`
+  method. For example:
+
+  ```js
+  console.log(ce.box(['Sigma', 2]).toAsciiMath({functions: {Sigma: 'sigma'}}));
+  // -> sigma(2)
+  ```
+
+- Added LaTeX syntax to index collections. If `a` is a collection:
+
+  - `a[i]` is parsed as `["At", "a", "i"]`.
+  - `a[i,j]` is parsed as `["At", "a", "i", "j"]`.
+  - `a_i` is parsed as `["At", "a", "i"]`.
+  - `a_{i,j}` is parsed as `["At", "a", "i", "j"]`.
 
 - Added support for Kronecker delta notation, i.e. `\delta_{ij}`, which is
   parsed as `["KroneckerDelta", "i", "j"]` and is equal to 1 if `i = j` and 0
   otherwise.
 
-  Also support single index, whose value is 1 if the index is 0 and 0 otherwise,
-  and multiple indexes whose value is 1 if all indexes are equal and 0
-  otherwise.
+  When a single index is provided the value of the function is 1 if the index is
+  0 and 0 otherwise
+
+  When multiple index are provided, the value of the function is 1 if all the
+  indexes are equal and 0 otherwise.
 
 - Added support for Iverson Bracket notation, i.e. `[a = b]`, which is parsed as
   `["Boole", ["Equal", "a", "b"]]` and is equal to 1 if its argument is true and
   0 otherwise. The argument is expected to be a relational expression.
 
-- Implemented Unique and Tally on collections. Unique returns a collection with
-  only the unique elements of the input collection, and Tally returns a
+- Implemented `Unique` and `Tally` on collections. `Unique` returns a collection
+  with only the unique elements of the input collection, and `Tally` returns a
   collection with the count of each unique element.
 
   ```js
@@ -29,8 +104,8 @@
   // -> [['List', 1, 2, 3, 4, 5], ['List', 2, 2, 2, 1, 1]]
   ```
 
-- Implemented the Map, Filter and Tabulate functions. These functions can be
-  used to transform collections, for example:
+- Implemented the `Map`, `Filter` and `Tabulate` functions. These functions can
+  be used to transform collections, for example:
 
   ```js
   // Using LaTeX
@@ -47,7 +122,7 @@
   // -> [1, 4, 9, 16, 25]
   ```
 
-  Tabulate can be used with multiple indexes. For example, to generate a 4x4
+  `Tabulate` can be used with multiple indexes. For example, to generate a 4x4
   unit matrix:
 
   ```js
@@ -59,6 +134,12 @@
   // -> [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
 
   ```
+
+- Added Choose function to compute binomial coefficients, i.e. `Choose(5, 2)` is
+  equal to 10.
+
+- The fallback for non-constructible complex values of trigonometric functions
+  is now implemented via rules.
 
 ### Issues Resolved
 

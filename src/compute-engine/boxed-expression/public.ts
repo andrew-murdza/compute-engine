@@ -16,6 +16,7 @@ import type {
 } from '../latex-syntax/public';
 import { IndexedLatexDictionary } from '../latex-syntax/dictionary/definitions';
 import { Rational } from '../numerics/rationals';
+import { NumericValue } from '../numeric-value/public';
 
 import './serialize';
 
@@ -65,7 +66,7 @@ export interface BoxedExpression {
    *
    * @category Primitive Methods
    */
-  valueOf(): number | Object | string | boolean;
+  valueOf(): number | any | string | boolean;
 
   /** From `Object.toString()`, return a string representation of the
    *  expression. This string is suitable to be output to the console
@@ -585,6 +586,22 @@ export interface BoxedExpression {
    */
   readonly numericValue: number | Decimal | Complex | Rational | null;
 
+  //
+  // Algebraic operations
+  //
+  neg(): BoxedExpression;
+  inv(): BoxedExpression;
+  abs(): BoxedExpression;
+  add(...rhs: (number | BoxedExpression)[]): BoxedExpression;
+  sub(rhs: BoxedExpression): BoxedExpression;
+  mul(...rhs: (number | BoxedExpression)[]): BoxedExpression;
+  div(rhs: BoxedExpression): BoxedExpression;
+  pow(exp: number | BoxedExpression): BoxedExpression;
+  sqrt(): BoxedExpression;
+  // root(exp: number | BoxedExpression): BoxedExpression;
+  // log(base?: SemiBoxedExpression): BoxedExpression;
+  // exp(): BoxedExpression;
+
   /** The shape describes the axis of the expression.
    * When the expression is a scalar (number), the shape is `[]`.
    * When the expression is a vector, the shape is `[n]`.
@@ -837,7 +854,7 @@ export interface BoxedExpression {
    * The result is in canonical form.
    *
    */
-  simplify(options?: SimplifyOptions): BoxedExpression;
+  simplify(options?: Partial<SimplifyOptions>): BoxedExpression;
 
   /**
    * Return the value of the canonical form of this expression.
@@ -880,7 +897,7 @@ export interface BoxedExpression {
    *
    * The result is in canonical form.
    */
-  N(options?: NOptions): BoxedExpression;
+  N(): BoxedExpression;
 
   compile(
     to?: 'javascript',
@@ -901,7 +918,7 @@ export interface BoxedExpression {
    * Equivalent to `expr.N().valueOf()`.
    *
    */
-  get value(): number | boolean | string | Object | undefined;
+  get value(): number | boolean | string | object | undefined;
 
   /**
    * Only the value of variables can be changed (symbols that are not
@@ -1096,7 +1113,7 @@ export interface BoxedBaseDefinition {
   /** When the environment changes, for example the numerical precision,
    * call `reset()` so that any cached values can be recalculated.
    */
-  reset();
+  reset(): void;
 }
 
 /**
@@ -1535,7 +1552,7 @@ export interface BoxedSymbolDefinition
 export type PatternReplaceFunction = (
   expr: BoxedExpression,
   wildcards: BoxedSubstitution
-) => BoxedExpression;
+) => BoxedExpression | undefined;
 
 /** @category Rules */
 export type PatternConditionFunction = (
@@ -1578,7 +1595,7 @@ export type PatternConditionFunction = (
 export type Rule =
   | string
   | {
-      match: LatexString | SemiBoxedExpression | Pattern;
+      match?: LatexString | SemiBoxedExpression | Pattern;
       replace: LatexString | SemiBoxedExpression | PatternReplaceFunction;
       condition?: LatexString | PatternConditionFunction;
       exact?: boolean; // Default to true
@@ -1588,7 +1605,7 @@ export type Rule =
 
 /** @category Rules */
 export type BoxedRule = {
-  match: Pattern;
+  match?: Pattern;
   replace: BoxedExpression | PatternReplaceFunction;
   condition: undefined | PatternConditionFunction;
   priority: number;
@@ -1718,8 +1735,9 @@ export type DomainExpression<T = SemiBoxedExpression> =
  * @category Compute Engine
  */
 export type SimplifyOptions = {
-  recursive?: boolean;
-  rules?: null | BoxedRuleSet;
+  depth: number; // Depth in the expression tree
+  maxDepth: number; // Do not simplify beyong this depth
+  rules: null | BoxedRuleSet;
 };
 
 /** Options for `BoxedExpression.evaluate()`
@@ -1728,14 +1746,6 @@ export type SimplifyOptions = {
  */
 export type EvaluateOptions = {
   numericMode?: boolean; // Default to false
-};
-
-/** Options for `BoxedExpression.N()`
- *
- * @category Boxed Expression
- */
-export type NOptions = {
-  //
 };
 
 /**
@@ -1807,7 +1817,7 @@ export type AssignValue =
   | Complex
   | LatexString
   | SemiBoxedExpression
-  | ((ce: IComputeEngine, args) => BoxedExpression)
+  | ((ce: IComputeEngine, args: BoxedExpression[]) => BoxedExpression)
   | undefined;
 
 /** @internal */
@@ -1890,6 +1900,18 @@ export interface IComputeEngine {
   complex: (a: number | Complex, b?: number) => Complex;
   isComplex(a: unknown): a is Complex;
 
+  /** @internal */
+  _numericValue(
+    value: number | Rational | Decimal | Complex | { re: number; im?: number }
+  ): NumericValue;
+  /** @internal */
+  _toNumericValue(expr: BoxedExpression): [NumericValue, BoxedExpression];
+  /** @internal */
+  _fromNumericValue(
+    coeff: NumericValue,
+    expr?: BoxedExpression
+  ): BoxedExpression;
+
   set precision(p: number | 'machine');
   get precision(): number;
 
@@ -1953,18 +1975,14 @@ export interface IComputeEngine {
 
   add(...ops: ReadonlyArray<BoxedExpression>): BoxedExpression;
 
-  mul(...ops: ReadonlyArray<BoxedExpression>): BoxedExpression;
+  evalMul(...ops: ReadonlyArray<BoxedExpression>): BoxedExpression;
 
   pow(
     base: BoxedExpression,
     exponent: number | Rational | BoxedExpression
   ): BoxedExpression;
 
-  sqrt(base: BoxedExpression): BoxedExpression;
-
   inv(expr: BoxedExpression): BoxedExpression;
-
-  neg(expr: BoxedExpression): BoxedExpression;
 
   div(num: BoxedExpression, denom: BoxedExpression): BoxedExpression;
 
@@ -1997,7 +2015,8 @@ export interface IComputeEngine {
   /**
    * This is a primitive to create a boxed function.
    *
-   * In general, consider using `ce.box()` or `canonicalXXX()` instead.
+   * In general, consider using `ce.box()` or `ce.functin()` or
+   * `canonicalXXX()` instead.
    *
    * The caller must ensure that the arguments are in canonical form:
    * - arguments are `canonical()`
@@ -2101,7 +2120,7 @@ export interface IComputeEngine {
   checkContinueExecution(): void;
 
   /** @internal */
-  cache<T>(name: string, build: () => T, purge?: (T) => T | undefined): T;
+  cache<T>(name: string, build: () => T, purge?: (t: T) => T | undefined): T;
 
   /** @internal */
   readonly stats: ComputeEngineStats;

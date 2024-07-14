@@ -57,7 +57,7 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
       // do nothing to canonicalize the arguments
       evaluate: (ce, ops) => {
         if (ops.length !== 2) return undefined;
-        let [lhs, rhs] = ops;
+        const [lhs, rhs] = ops;
         return lhs.isSame(rhs) === true ? ce.True : ce.False;
       },
     },
@@ -124,9 +124,9 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
           if (!arg.isNumber) return undefined;
           if (!lhs) lhs = arg;
           else {
-            const test = ce.box(['Subtract', arg, lhs]).N().sgn;
+            const test = ce.box(['Subtract', arg, lhs]).N().sgn; // @fixme: use signdiff
             if (test === null || test === undefined) return undefined;
-            if (test <= 0) return ce.False;
+            if (test <= 0) return ce.False; // @fixme: shouldn't that be test < 0?
             lhs = arg;
           }
         }
@@ -384,7 +384,7 @@ function canonicalRelational(
   ops = flattenOps(flattenSequence(canonical(ops)), head);
 
   const nestedRelational: BoxedExpression[] = [];
-  let newOps: BoxedExpression[] = [];
+  const newOps: BoxedExpression[] = [];
   // Separate any nested relational operators
   for (const op of ops) {
     if (isRelationalOperator(op)) {

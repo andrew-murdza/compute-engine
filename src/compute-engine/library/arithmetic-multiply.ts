@@ -2,9 +2,9 @@ import { BoxedExpression, IComputeEngine } from '../public';
 
 import { MAX_SYMBOLIC_TERMS } from '../numerics/numeric';
 import { bignumPreferred } from '../boxed-expression/utils';
-import { canonicalNegate } from '../symbolic/negate';
+import { negateProduct } from '../symbolic/negate';
 import { Product } from '../symbolic/product';
-import { isRationalOne, isRationalZero, neg } from '../numerics/rationals';
+import { isOne, isZero, neg } from '../numerics/rationals';
 import { apply2N } from '../symbolic/utils';
 import {
   MultiIndexingSet,
@@ -69,7 +69,7 @@ export function canonicalMultiply(
     }
     if (op.numericValue !== null && op.isNegative) {
       sign = -sign;
-      result.push(ce.neg(op));
+      result.push(op.neg());
       continue;
     }
     if (op.symbol === 'ImaginaryUnit') {
@@ -99,13 +99,13 @@ export function canonicalMultiply(
 
   if (sign < 0) {
     if (result.length === 0) return ce.NegativeOne;
-    if (result.length === 1) return ce.neg(result[0]);
-    return ce.neg(ce._fn('Multiply', result.sort(order)));
+    if (result.length === 1) return result[0].neg();
+    return negateProduct(ce, [...result].sort(order));
   }
 
   if (result.length === 0) return ce.One;
   if (result.length === 1) return result[0];
-  return ce._fn('Multiply', result.sort(order));
+  return ce._fn('Multiply', [...result].sort(order));
 }
 
 export function simplifyMultiply(
@@ -117,7 +117,7 @@ export function simplifyMultiply(
   for (let op of ops) {
     op = op.simplify();
     if (op.isNaN || op.symbol === 'Undefined') return ce.NaN;
-    product.addTerm(op);
+    product.mul(op);
   }
 
   return product.asExpression();
@@ -128,6 +128,7 @@ export function evalMultiply(
   ops: ReadonlyArray<BoxedExpression>,
   mode: 'N' | 'evaluate' = 'evaluate'
 ): BoxedExpression {
+  // @fixme: review caller. In some cases, call distribute. Maybe should be done here. Also call evaluate() and N() multiple times. (but, incorrectly, not when length is 1)
   if (ops.length === 1) return ops[0];
 
   //
@@ -148,6 +149,7 @@ export function evalMultiply(
   //
   // First pass: looking for early exits
   //
+  // @fixme: don't need to do this loop and special case for 'N' mode
   for (const op of ops) {
     if (op.isNaN || op.symbol === 'Undefined') return ce.NaN;
     if (op.numericValue !== null && !op.isExact) mode = 'N';
@@ -224,11 +226,11 @@ function multiply2(
   if (op2.symbol === 'Nothing') return op1;
   if (op1.numericValue !== null) {
     if (op1.isOne) return op2;
-    if (op1.isNegativeOne) return canonicalNegate(op2);
+    if (op1.isNegativeOne) return op2.neg();
   }
   if (op2.numericValue !== null) {
     if (op2.isOne) return op1;
-    if (op2.isNegativeOne) return canonicalNegate(op1);
+    if (op2.isNegativeOne) return op1.neg();
   }
   let sign = 1;
   let [t, c] = op1.numericValue !== null ? [op1, op2] : [op2, op1];
@@ -242,10 +244,10 @@ function multiply2(
   if (c.numericValue !== null) {
     const r = asRational(c);
     if (r) {
-      if (isRationalOne(r)) return t;
-      if (isRationalZero(r)) return ce.Zero;
+      if (isOne(r)) return t;
+      if (isZero(r)) return ce.Zero;
       if (t.head === 'Add') {
-        if (sign < 0) c = canonicalNegate(c);
+        if (sign < 0) c = c.neg();
         return ce.add(...t.ops!.map((x) => multiply2(c, x)));
       }
 
@@ -254,17 +256,15 @@ function multiply2(
         const p = mul(r, tr);
         return ce.number(sign < 0 ? neg(p) : p);
       }
-      if (sign < 0) return ce._fn('Multiply', [canonicalNegate(c), t]);
+      if (sign < 0) return ce._fn('Multiply', [c.neg(), t]);
       return ce._fn('Multiply', [c, t]);
     }
   }
 
   if (c.hash === t.hash && c.isSame(t)) return square(ce, c);
 
-  const product = new Product(ce, [c, t]);
-
-  if (sign > 0) return product.asExpression();
-  return canonicalNegate(product.asExpression());
+  const product = new Product(ce, [c, t]).asExpression();
+  return sign > 0 ? product : product.neg();
 }
 
 // Canonical form of `["Product"]` (`\prod`) expressions.
@@ -277,22 +277,22 @@ export function canonicalProduct(
   ce.pushScope();
 
   body ??= ce.error('missing');
-  var result: BoxedExpression | undefined = undefined;
+  let result: BoxedExpression | undefined = undefined;
 
   if (
     indexingSet &&
     indexingSet.ops &&
     indexingSet.ops[0]?.head === 'Delimiter'
   ) {
-    var multiIndex = MultiIndexingSet(indexingSet);
+    const multiIndex = MultiIndexingSet(indexingSet);
     if (!multiIndex) return null;
-    var bodyAndIndex = [body.canonical];
+    const bodyAndIndex = [body.canonical];
     multiIndex.forEach((element) => {
       bodyAndIndex.push(element);
     });
     result = ce._fn('Product', bodyAndIndex);
   } else {
-    var singleIndex = SingleIndexingSet(indexingSet);
+    const singleIndex = SingleIndexingSet(indexingSet);
     result = singleIndex
       ? ce._fn('Product', [body.canonical, singleIndex])
       : ce._fn('Product', [body.canonical]);
@@ -307,7 +307,7 @@ export function evalMultiplication(
   summationEquation: ReadonlyArray<BoxedExpression>,
   mode: 'simplify' | 'N' | 'evaluate'
 ): BoxedExpression | undefined {
-  let expr = summationEquation[0];
+  const expr = summationEquation[0];
   let indexingSet: BoxedExpression[] = [];
   if (summationEquation) {
     indexingSet = [];
@@ -361,10 +361,10 @@ export function evalMultiplication(
   const fn = expr;
   ce.pushScope();
 
-  var indexArray: string[] = [];
-  let lowerArray: number[] = [];
-  let upperArray: number[] = [];
-  let isFiniteArray: boolean[] = [];
+  const indexArray: string[] = [];
+  const lowerArray: number[] = [];
+  const upperArray: number[] = [];
+  const isFiniteArray: boolean[] = [];
   indexingSet.forEach((indexingSetElement) => {
     const [index, lower, upper, isFinite] = normalizeIndexingSet(
       indexingSetElement.evaluate()
@@ -395,9 +395,9 @@ export function evalMultiplication(
       const terms: BoxedExpression[] = [];
       for (let i = lower; i <= upper; i++) {
         ce.assign({ [index]: i });
-        terms.push(fn.simplify());
+        terms.push(fn.simplify()); // @fixme: call evaluate() instead
       }
-      result = ce.mul(...terms).simplify();
+      result = ce.evalMul(...terms).simplify();
     }
   }
 
@@ -431,7 +431,7 @@ export function evalMultiplication(
       //ce.assign({ [index]: i });
       terms.push(fn.evaluate());
     }
-    result = ce.mul(...terms).evaluate();
+    result = ce.evalMul(...terms).evaluate(); // @fixme: no need to call evaluate()
   }
 
   if (mode === 'N') {

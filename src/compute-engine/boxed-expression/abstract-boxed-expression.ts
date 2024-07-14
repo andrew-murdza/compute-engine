@@ -31,17 +31,15 @@ import {
   IComputeEngine,
   JsonSerializationOptions,
   Metadata,
-  NOptions,
   PatternMatchOptions,
   Rule,
   RuntimeScope,
   SemiBoxedExpression,
-  SimplifyOptions,
   Substitution,
 } from './public';
 import { SerializeLatexOptions } from '../latex-syntax/public';
 import { asFloat } from './numerics';
-import { toAsciiMath } from './ascii-math';
+import { AsciiMathOptions, toAsciiMath } from './ascii-math';
 
 /**
  * _BoxedExpression
@@ -94,6 +92,10 @@ export abstract class _BoxedExpression implements BoxedExpression {
     if (typeof this.string === 'string') return this.string;
     if (typeof this.symbol === 'string') return this.symbol;
     return asFloat(this) ?? this.toString();
+  }
+
+  toAsciiMath(options: Partial<AsciiMathOptions> = {}): string {
+    return toAsciiMath(this, options);
   }
 
   /** Object.toString() */
@@ -398,6 +400,42 @@ export abstract class _BoxedExpression implements BoxedExpression {
     return null;
   }
 
+  //
+  // Algebraic operations
+  //
+  neg(): BoxedExpression {
+    return this.engine.NaN;
+  }
+  inv(): BoxedExpression {
+    return this.engine.NaN;
+  }
+  abs(): BoxedExpression {
+    return this.engine.NaN;
+  }
+  add(...rhs: (number | BoxedExpression)[]): BoxedExpression {
+    return this.engine.NaN;
+  }
+  sub(rhs: BoxedExpression): BoxedExpression {
+    return this.engine.NaN;
+  }
+  mul(...rhs: (number | BoxedExpression)[]): BoxedExpression {
+    return this.engine.NaN;
+  }
+  div(rhs: BoxedExpression): BoxedExpression {
+    return this.engine.NaN;
+  }
+  pow(exp: number | BoxedExpression): BoxedExpression {
+    return this.engine.NaN;
+  }
+  sqrt(): BoxedExpression {
+    return this.engine.NaN;
+  }
+  // root(exp: number | BoxedExpression): BoxedExpression {
+  //   return this.engine.NaN;
+  // }
+  // log(base?: SemiBoxedExpression): BoxedExpression;
+  // exp(): BoxedExpression;
+
   get sgn(): -1 | 0 | 1 | undefined | null {
     return null;
   }
@@ -570,7 +608,7 @@ export abstract class _BoxedExpression implements BoxedExpression {
     return false;
   }
 
-  get value(): number | boolean | string | Object | undefined {
+  get value(): number | boolean | string | object | undefined {
     return this.N().valueOf();
   }
 
@@ -580,7 +618,6 @@ export abstract class _BoxedExpression implements BoxedExpression {
     throw new Error(`Can't change the value of \\(${this.latex}\\)`);
   }
 
-  // @ts-ignore
   get domain(): BoxedDomain | undefined {
     return undefined;
   }
@@ -625,15 +662,15 @@ export abstract class _BoxedExpression implements BoxedExpression {
     return undefined;
   }
 
-  simplify(_options?: SimplifyOptions): BoxedExpression {
+  simplify(): BoxedExpression {
     return this;
   }
 
-  evaluate(_options?: EvaluateOptions): BoxedExpression {
+  evaluate(_options?: Partial<EvaluateOptions>): BoxedExpression {
     return this.simplify();
   }
 
-  N(_options?: NOptions): BoxedExpression {
+  N(): BoxedExpression {
     return this.evaluate({ numericMode: true });
   }
 

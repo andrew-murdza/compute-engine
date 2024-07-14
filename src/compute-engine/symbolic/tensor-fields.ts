@@ -154,8 +154,8 @@ export class TensorFieldNumber implements TensorField<number> {
         return Array.isArray(x)
           ? x.map((x) => (x === 0 ? false : true))
           : x === 0
-          ? false
-          : true;
+            ? false
+            : true;
       case 'string':
         return Array.isArray(x)
           ? x.map((x) => Number(x).toString())
@@ -324,19 +324,19 @@ export class TensorFieldExpression implements TensorField<BoxedExpression> {
   }
 
   neg(x: BoxedExpression): BoxedExpression {
-    return this.ce.neg(x);
+    return x.neg();
   }
 
   sub(lhs: BoxedExpression, rhs: BoxedExpression): BoxedExpression {
-    return this.ce.add(lhs, this.ce.neg(rhs));
+    return this.ce.add(lhs, rhs.neg());
   }
 
   mul(lhs: BoxedExpression, rhs: BoxedExpression): BoxedExpression {
-    return this.ce.mul(lhs, rhs);
+    return this.ce.evalMul(lhs, rhs);
   }
 
   muln(...xs: BoxedExpression[]): BoxedExpression {
-    return this.ce.mul(...xs);
+    return this.ce.evalMul(...xs);
   }
 
   div(lhs: BoxedExpression, rhs: BoxedExpression): BoxedExpression {

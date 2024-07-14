@@ -28,14 +28,12 @@ import {
 } from '../numerics/rationals';
 import { IdentifierDefinitions } from '../public';
 import { bignumPreferred, complexAllowed } from '../boxed-expression/utils';
-import { canonicalNegate, processNegate } from '../symbolic/negate';
 import {
-  simplifyAdd,
-  evalAdd,
   domainAdd,
   evalSummation,
   canonicalSummation,
   canonicalAdd,
+  simplifyAdd,
 } from './arithmetic-add';
 import {
   simplifyMultiply,
@@ -49,7 +47,7 @@ import {
   evalNDivide,
   simplifyDivide,
 } from './arithmetic-divide';
-import { processPower, processSqrt } from './arithmetic-power';
+import { processPower } from './arithmetic-power';
 import { applyN, apply2N, canonical } from '../symbolic/utils';
 import {
   checkDomain,
@@ -66,7 +64,7 @@ import {
   asRational,
   asBignum,
 } from '../boxed-expression/numerics';
-import { distribute } from '../symbolic/expand';
+import { expandProducts } from '../symbolic/expand';
 
 // When considering processing an arithmetic expression, the following
 // are the core canonical arithmetic operations that should be considered:
@@ -90,30 +88,6 @@ export type CanonicalArithmeticFunctions =
 // - Square -> Power(_, 2)
 // - Subtract -> Add(_1, Negate(_2))
 // - Rational -> Rational number
-
-// @todo Future additions to the dictionary
-
-// See Scala/Breeze "universal functions": https://github.com/scalanlp/breeze/wiki/Universal-Functions
-
-// LogOnePlus: { domain: 'Numbers' },
-// See https://numerics.diploid.ca/floating-point-part-4.html,
-// regarding 'remainder' and 'truncatingRemainder'
-// Boole
-// Zeta function
-// Random() -> random number between 0 and 1
-// Random(n) -> random integer between 1 and n
-// Random(n, m) -> random integer between n and m
-// Hash
-
-// # Prime Numbers:
-// Prime: gives the nth prime number
-// NextPrime: the smallest prime larger than `n`
-// PrimeFactors
-// Divisors
-
-// # Combinatorials
-// Binomial
-// Fibonacci
 
 /*
 
@@ -176,10 +150,10 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
       hold: 'all',
       signature: {
         domain: 'NumericFunctions',
-        result: (ce, args) =>
+        result: (ce, ops) =>
           domainAdd(
             ce,
-            args.map((x) => x.domain)
+            ops.map((x) => x.domain)
           ),
         // canonical: (ce, args) => canonicalAdd(ce, args), // never called: shortpath
         simplify: (ce, ops) =>
@@ -188,15 +162,15 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
             ops.map((x) => x.simplify())
           ),
         evaluate: (ce, ops) =>
-          evalAdd(
+          simplifyAdd(
             ce,
             ops.map((x) => x.evaluate())
           ),
+
         N: (ce, ops) =>
-          evalAdd(
+          simplifyAdd(
             ce,
-            ops.map((x) => x.N()),
-            'N'
+            ops.map((x) => x.N())
           ),
       },
     },
@@ -254,12 +228,13 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
         result: 'Numbers',
 
         canonical: (ce, args) => {
+          // @fastpath: this code path is never taken, canonicalDivide is called directly
           args = checkNumericArgs(ce, args);
-          if (args.length < 2) return args[0] ?? ce.error('missing');
           let result = args[0];
           if (!result) return ce.error('missing');
+          if (args.length < 2) return result;
           const rest = args.slice(1);
-          for (const x of rest) result = canonicalDivide(ce, result, x);
+          for (const x of rest) result = canonicalDivide(result, x);
 
           return result;
         },
@@ -299,7 +274,7 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
         canonical: (ce, args) => {
           const base = args[0];
           if (base instanceof BoxedNumber && base.isNegative)
-            return ce.neg(ce._fn('Factorial', [ce.neg(base)]));
+            return ce._fn('Factorial', [base.neg()]).neg();
           return ce._fn('Factorial', [base]);
         },
         evaluate: (ce, ops) => {
@@ -539,24 +514,26 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
         // Never called: fastpath
         // canonical: (ce, args) => canonicalMultiply(ce, args)
         //
-        simplify: (ce, ops) =>
-          simplifyMultiply(
-            ce,
-            ops.map((x) => x.simplify())
-          ),
+        simplify: (ce, ops) => simplifyMultiply(ce, ops),
 
         evaluate: (ce, ops) => {
+          // @fixme: move call to expandProducts() and flattenOps() inside
+          // evalMultiply (once ce.mul() has been changed to not evaluate)
           ops = ops.map((x) => x.evaluate());
-          const expr = distribute(ops);
-          if (expr.head !== 'Multiply') return expr.evaluate();
-          // ops = flattenOps(expr.ops!, 'Multiply');
+          const expr = expandProducts(ce, ops);
+          if (expr !== null) {
+            if (expr.head !== 'Multiply') return expr.evaluate();
+            ops = flattenOps(expr.ops!, 'Multiply');
+          }
           return evalMultiply(ce, ops);
         },
         N: (ce, ops) => {
           ops = ops.map((x) => x.N());
-          const expr = distribute(ops);
-          if (expr.head !== 'Multiply') return expr.N();
-          ops = flattenOps(expr.ops!, 'Multiply');
+          const expr = expandProducts(ce, ops);
+          if (expr !== null) {
+            if (expr.head !== 'Multiply') return expr.N();
+            ops = flattenOps(expr.ops!, 'Multiply');
+          }
           return evalMultiply(ce, ops, 'N');
         },
       },
@@ -591,11 +568,11 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
           args = checkNumericArgs(ce, args);
           if (args.length === 0) return ce.error('missing');
 
-          return ce.neg(args[0]);
+          return args[0].neg();
         },
-        simplify: (ce, ops) => processNegate(ce, ops[0], 'simplify'),
-        evaluate: (ce, ops) => processNegate(ce, ops[0], 'evaluate'),
-        N: (ce, ops) => processNegate(ce, ops[0], 'N'),
+        simplify: (ce, ops) => ops[0].neg(),
+        evaluate: (ce, ops) => ops[0].neg(),
+        N: (ce, ops) => ops[0].neg(),
         sgn: (_ce, args): -1 | 0 | 1 | undefined => {
           const s = args[0].sgn;
           if (s === undefined || s === null) return undefined;
@@ -617,7 +594,7 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
         domain: ['FunctionOf', 'Values', 'Tuples'],
         evaluate: (ce, ops) => {
           if (ops.length !== 1) return undefined;
-          return ce.box(['Pair', ops[0], ce.neg(ops[0])]);
+          return ce.box(['Pair', ops[0], ops[0].neg()]);
         },
       },
     },
@@ -636,7 +613,7 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
           // If the base is a literal number and negative, treat it as a Negate
           // i.e. -2^3 -> -(2^3)
           if (base instanceof BoxedNumber && base.isNegative)
-            return ce.neg(ce.pow(base, exp));
+            return ce.pow(base, exp).neg();
 
           return ce.pow(base, exp);
         },
@@ -829,9 +806,13 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
           if (args.length !== 1) return ce._fn('Sqrt', args);
           return ce.pow(args[0], ce.Half);
         },
-        simplify: (ce, ops) => processSqrt(ce, ops[0], 'simplify'),
-        evaluate: (ce, ops) => processSqrt(ce, ops[0], 'evaluate'),
-        N: (ce, ops) => processSqrt(ce, ops[0], 'N'),
+        simplify: (ce, ops) => ops[0].sqrt(),
+        evaluate: (ce, ops) => ops[0].sqrt(),
+        N: (ce, ops) => {
+          const n = ops[0].numericValue;
+          if (n === null) return ops[0].sqrt();
+          return ce._fromNumericValue(ce._numericValue(n).sqrt().N());
+        },
         // evalDomain: Square root of a prime is irrational
         // https://proofwiki.org/wiki/Square_Root_of_Prime_is_Irrational
       },
@@ -871,7 +852,7 @@ export const ARITHMETIC_LIBRARY: IdentifierDefinitions[] = [
           const rest = args.slice(1);
           return canonicalAdd(
             ce,
-            flattenOps([first, ...rest.map((x) => canonicalNegate(x))], 'Add')
+            flattenOps([first, ...rest.map((x) => x.neg())], 'Add')
           );
         },
       },
@@ -1369,7 +1350,7 @@ function processAbs(
     }
   }
   if (arg.isNonNegative) return arg;
-  if (arg.isNegative) return ce.neg(arg);
+  if (arg.isNegative) return arg.neg();
   return undefined;
 }
 
@@ -1513,12 +1494,13 @@ function processLn(ce: IComputeEngine, ops: ReadonlyArray<BoxedExpression>) {
   const n = ops[0];
   if (n.isZero) return ce.NaN;
   if (n.isOne) return ce.Zero;
-  if (n.isNegativeOne && complexAllowed(ce)) return ce.mul(ce.Pi, ce.I);
+  if (n.isNegativeOne && complexAllowed(ce))
+    return ce._fn('Multiply', [ce.Pi, ce.I]);
   if (n.symbol === 'ExponentialE') return ce.One;
   if (n.head === 'Power' && n.op1.symbol === 'ExporentialE') return n.op2;
   if (n.head === 'Power') {
     const [base, exp] = n.ops!;
-    return ce.mul(exp, ce.box(['Ln', base]).simplify());
+    return ce.evalMul(exp, ce.box(['Ln', base]).simplify());
   }
   if (n.head === 'Multiply') {
     const [a, b] = n.ops!;
@@ -1528,7 +1510,7 @@ function processLn(ce: IComputeEngine, ops: ReadonlyArray<BoxedExpression>) {
     const [a, b] = n.ops!;
     return ce.add(
       ce.box(['Ln', a]).simplify(),
-      ce.neg(ce.box(['Ln', b]).simplify())
+      ce.box(['Ln', b]).neg().simplify()
     );
   }
 }
