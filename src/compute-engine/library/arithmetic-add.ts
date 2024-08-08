@@ -6,7 +6,7 @@ import { MAX_SYMBOLIC_TERMS } from '../numerics/numeric';
 import { widen } from '../boxed-expression/boxed-domain';
 import { sortAdd } from '../boxed-expression/order';
 import { each, isCollection, isIndexableCollection } from '../collection-utils';
-import { Terms } from '../numerics/terms';
+import { add } from '../numerics/terms';
 
 import {
   MultiIndexingSet,
@@ -16,22 +16,27 @@ import {
   range,
 } from './utils';
 import { asBignum, asFloat } from '../boxed-expression/numerics';
+import { flatten } from '../symbolic/flatten';
 
 /** The canonical form of `Add`:
  * - removes `0`
  * - capture complex numbers (`a + ib` or `ai + b`)
+ * - sort the terms
+ * - arguments are canonicalized, result is canonical
  * */
 export function canonicalAdd(
   ce: IComputeEngine,
   ops: ReadonlyArray<BoxedExpression>
 ): BoxedExpression {
-  console.assert(ops.every((x) => x.isCanonical));
+  // Make canonical, flatten, and lift nested expressions
+  ops = flatten(ops, 'Add');
 
   // Remove literal 0
   ops = ops.filter((x) => x.numericValue === null || !x.isZero);
 
   if (ops.length === 0) return ce.Zero;
   if (ops.length === 1 && !isIndexableCollection(ops[0])) return ops[0];
+
   //
   // Is this a  complex number, i.e. `a + ib` or `ai + b`?
   //
@@ -47,8 +52,9 @@ export function canonicalAdd(
       return ce.number(ce.complex(re, im));
   }
 
-  // Commutative, sort
   if (ops.length === 1) return ops[0];
+
+  // Commutative, sort
   return ce._fn('Add', sortAdd(ops));
 }
 
@@ -62,14 +68,6 @@ export function domainAdd(
     dom = widen(dom, arg);
   }
   return dom;
-}
-
-export function simplifyAdd(
-  ce: IComputeEngine,
-  args: ReadonlyArray<BoxedExpression>
-): BoxedExpression {
-  if (args.length === 1) return args[0];
-  return new Terms(ce, args).asExpression();
 }
 
 function evalAddNum(ops: ReadonlyArray<BoxedExpression>): number | null {
@@ -96,7 +94,7 @@ export function canonicalSummation(
   if (
     indexingSet &&
     indexingSet.ops &&
-    indexingSet.ops[0]?.head === 'Delimiter'
+    indexingSet.ops[0]?.operator === 'Delimiter'
   ) {
     const multiIndex = MultiIndexingSet(indexingSet);
     if (!multiIndex) return null;
@@ -214,7 +212,7 @@ export function evalSummation(
         ce.assign(index, i);
         terms.push(fn.simplify());
       }
-      result = ce.add(...terms).simplify();
+      result = add(...terms).simplify();
     }
   }
 
@@ -247,7 +245,7 @@ export function evalSummation(
       });
       terms.push(fn.evaluate());
     }
-    result = ce.add(...terms).evaluate();
+    result = add(...terms).evaluate();
   }
 
   for (let i = 0; i < indexArray.length; i++) {
@@ -305,9 +303,8 @@ export function evalSummation(
           if (result === null) result = ce.number(sum);
         } else {
           // Machine precision
-          const numericMode = ce.numericMode;
           const precision = ce.precision;
-          ce.numericMode = 'machine';
+          ce.precision = 'machine';
           let sum = 0;
           for (let i = lower; i <= upper; i++) {
             ce.assign(index, i);
@@ -322,7 +319,6 @@ export function evalSummation(
             }
             sum += term;
           }
-          ce.numericMode = numericMode;
           ce.precision = precision;
           if (result === null) result = ce.number(sum);
         }
@@ -337,7 +333,7 @@ export function evalSummation(
         ce.assign(index, 999);
         const nMaxMinusOne = fn.N();
 
-        const ratio = asFloat(ce.div(nMax, nMaxMinusOne).N());
+        const ratio = asFloat(nMax.div(nMaxMinusOne).N());
         if (ratio !== null && Number.isFinite(ratio) && Math.abs(ratio) > 1) {
           result = ce.PositiveInfinity;
         } else {
@@ -345,9 +341,8 @@ export function evalSummation(
           // Evaluate as a machine number (it's an approximation to infinity, so
           // no point in calculating with high precision), and check for convergence
           let sum = 0;
-          const numericMode = ce.numericMode;
           const precision = ce.precision;
-          ce.numericMode = 'machine';
+          ce.precision = 'machine';
           for (let i = lower; i <= upper; i++) {
             ce.assign(index, i);
             const term = asFloat(fn.N());
@@ -360,7 +355,6 @@ export function evalSummation(
               break;
             sum += term;
           }
-          ce.numericMode = numericMode;
           ce.precision = precision;
           if (result === null) result = ce.number(sum);
         }
@@ -381,25 +375,24 @@ export function evalSummation(
  * - ['Multiply', 5, 'ImaginaryUnit'] -> 5
  * - ['Multiply', 'ImaginaryUnit', 5] -> 5
  * - ['Divide', 'ImaginaryUnit', 2] -> 0.5
+ *
  */
-export function getImaginaryCoef(expr: BoxedExpression): number {
+function getImaginaryCoef(expr: BoxedExpression): number {
   if (expr.symbol === 'ImaginaryUnit') return 1;
 
   const z = expr.numericValue;
   if (z !== null && z instanceof Complex && z.re === 0) return z.im;
 
-  if (expr.head === 'Negate') return -getImaginaryCoef(expr.op1);
+  if (expr.operator === 'Negate') return -getImaginaryCoef(expr.op1);
 
-  if (expr.head === 'Multiply' && expr.nops === 2) {
+  if (expr.operator === 'Multiply' && expr.nops === 2) {
     if (expr.op1.symbol === 'ImaginaryUnit') return asFloat(expr.op2) ?? 0;
     if (expr.op2.symbol === 'ImaginaryUnit') return asFloat(expr.op1) ?? 0;
   }
 
-  if (expr.head === 'Divide') {
-    const v = getImaginaryCoef(expr.op1);
+  if (expr.operator === 'Divide') {
     const denom = asFloat(expr.op2);
-    if (denom === null) return 0;
-    return v / denom;
+    if (denom !== null) return getImaginaryCoef(expr.op1) / denom;
   }
 
   return 0;

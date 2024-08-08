@@ -1,17 +1,18 @@
-import { Expression } from '../../../math-json/math-json-format';
+import { Expression } from '../../../math-json/types';
 import {
   machineValue,
   mapArgs,
-  op,
+  operand,
   nops,
   stringValue,
-  head,
-  ops,
+  operator,
+  operands,
   missingIfEmpty,
   stripText,
   isEmptySequence,
   unhold,
   symbol,
+  dictionaryFrom,
 } from '../../../math-json/utils';
 import {
   ADDITION_PRECEDENCE,
@@ -79,7 +80,7 @@ function parseSequence(
 function serializeOps(sep = '') {
   return (serializer: Serializer, expr: Expression | null): string => {
     if (!expr) return '';
-    const xs = ops(expr) ?? [];
+    const xs = operands(expr);
     if (xs.length === 0) return '';
     if (xs.length === 1) return serializer.serialize(xs[0]);
 
@@ -142,9 +143,9 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     precedence: ARROW_PRECEDENCE, // MathML rightwards arrow
     parse: (parser: Parser, lhs: Expression) => {
       let params: string[] = [];
-      if (head(lhs) === 'Delimiter') lhs = op(lhs, 1) ?? 'Nothing';
-      if (head(lhs) === 'Sequence') {
-        for (const x of ops(lhs) ?? []) {
+      if (operator(lhs) === 'Delimiter') lhs = operand(lhs, 1) ?? 'Nothing';
+      if (operator(lhs) === 'Sequence') {
+        for (const x of operands(lhs)) {
           if (!symbol(x)) return null;
           params.push(symbol(x)!);
         }
@@ -155,34 +156,39 @@ export const DEFINITIONS_CORE: LatexDictionary = [
 
       let rhs =
         parser.parseExpression({ minPrec: ARROW_PRECEDENCE }) ?? 'Nothing';
-      if (head(rhs) === 'Delimiter') rhs = op(rhs, 1) ?? 'Nothing';
-      if (head(rhs) === 'Sequence') rhs = ['Block', ...(ops(rhs) ?? [])];
+      if (operator(rhs) === 'Delimiter') rhs = operand(rhs, 1) ?? 'Nothing';
+      if (operator(rhs) === 'Sequence') rhs = ['Block', ...operands(rhs)];
 
       return ['Function', rhs, ...params];
     },
     serialize: (serializer: Serializer, expr: Expression): string => {
-      const args = ops(expr);
-      if (args === null || args.length < 1) return '()\\mapsto()';
+      const args = operands(expr);
+      if (args.length < 1) return '()\\mapsto()';
       if (args.length === 1)
-        return joinLatex(['()', '\\mapsto', serializer.serialize(op(expr, 1))]);
+        return joinLatex([
+          '()',
+          '\\mapsto',
+          serializer.serialize(operand(expr, 1)),
+        ]);
 
       if (args.length === 2) {
         return joinLatex([
-          serializer.serialize(op(expr, 2)),
+          serializer.serialize(operand(expr, 2)),
           '\\mapsto',
-          serializer.serialize(op(expr, 1)),
+          serializer.serialize(operand(expr, 1)),
         ]);
       }
 
       return joinLatex([
         serializer.wrapString(
-          (ops(expr)?.slice(1) ?? [])
+          operands(expr)
+            ?.slice(1)
             .map((x) => serializer.serialize(x))
             .join(', '),
           'normal'
         ),
         '\\mapsto',
-        serializer.serialize(op(expr, 1)),
+        serializer.serialize(operand(expr, 1)),
       ]);
     },
   },
@@ -192,13 +198,60 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     kind: 'function',
     identifierTrigger: 'apply',
     serialize: (serializer: Serializer, expr: Expression): string => {
-      const h = op(expr, 1);
-      if (typeof h === 'string') {
-        const fn = (expr as Expression[]).slice(1) as Expression;
+      const lhs = operand(expr, 1); // The function body
+
+      const h = operator(lhs);
+      if (h === 'InverseFunction' || h === 'Derivative') {
+        // For inverse functions and derivatives display as a regular function,
+        // e.g. \sin^{-1} x, f'(x) instead of x \rhd f' and x \rhd \sin^{-1}
+        const style = serializer.options.applyFunctionStyle(
+          expr,
+          serializer.level
+        );
+        const args = operands(expr).slice(1) as any as Expression[];
+        return (
+          serializer.serializeFunction(
+            lhs!,
+            serializer.dictionary.ids.get(h!)
+          ) +
+          serializer.wrapString(
+            args.map((x) => serializer.serialize(x)).join(', '),
+            style
+          )
+        );
+      }
+
+      // If no argument, or the body is a single symbol, display as a regular function
+      const rhs = operand(expr, 2); // The first argument
+      if (typeof lhs === 'string' || !rhs) {
+        // e.g. "Apply(f, x)" -> "f(x)"
+        const fn = operands(expr).slice(1) as any as Expression;
         return serializer.serialize(fn);
       }
 
-      return serializer.serializeFunction(ops(expr) as Expression);
+      if (nops(expr) === 2) {
+        // If there's a single argument, we can use the pipeline operator
+        // (i.e. `\rhd` `|>`)
+        return joinLatex([
+          serializer.wrap(lhs, 20),
+          '\\lhd',
+          serializer.wrap(rhs, 20),
+        ]);
+      }
+
+      const style = serializer.options.applyFunctionStyle(
+        expr,
+        serializer.level
+      );
+      return joinLatex([
+        '\\operatorname{apply}',
+        serializer.wrapString(
+          serializer.serialize(h) +
+            ', ' +
+            serializer.serialize(['List', ...operands(expr)]),
+          style
+        ),
+      ]);
     },
   },
   {
@@ -226,12 +279,12 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     associativity: 'right',
     precedence: ASSIGNMENT_PRECEDENCE,
     serialize: (serializer: Serializer, expr: Expression): string => {
-      const id = unhold(op(expr, 1));
+      const id = unhold(operand(expr, 1));
 
-      if (head(op(expr, 2)) === 'Function') {
-        const op_2 = op(expr, 2);
-        const body = unhold(op(op_2, 1));
-        const args = ops(op_2)?.slice(1) ?? [];
+      if (operator(operand(expr, 2)) === 'Function') {
+        const op_2 = operand(expr, 2);
+        const body = unhold(operand(op_2, 1));
+        const args = operands(op_2).slice(1);
 
         return joinLatex([
           serializer.serialize(id),
@@ -246,7 +299,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
       return joinLatex([
         serializer.serialize(id),
         '\\coloneq',
-        serializer.serialize(op(expr, 2)),
+        serializer.serialize(operand(expr, 2)),
       ]);
     },
     parse: parseAssign,
@@ -277,11 +330,11 @@ export const DEFINITIONS_CORE: LatexDictionary = [
   {
     name: 'BaseForm',
     serialize: (serializer, expr) => {
-      const radix = machineValue(op(expr, 2)) ?? NaN;
+      const radix = machineValue(operand(expr, 2)) ?? NaN;
       if (isFinite(radix) && radix >= 2 && radix <= 36) {
         // CAUTION: machineValue() may return a truncated value
         // if the number is outside of the machine range.
-        const num = machineValue(op(expr, 1)) ?? NaN;
+        const num = machineValue(operand(expr, 1)) ?? NaN;
         if (isFinite(num) && Number.isInteger(num)) {
           let digits = Number(num).toString(radix);
           let groupLength = 0;
@@ -308,9 +361,9 @@ export const DEFINITIONS_CORE: LatexDictionary = [
       }
       return (
         '\\operatorname{BaseForm}(' +
-        serializer.serialize(op(expr, 1)) +
+        serializer.serialize(operand(expr, 1)) +
         ', ' +
-        serializer.serialize(op(expr, 2)) +
+        serializer.serialize(operand(expr, 2)) +
         ')'
       );
     },
@@ -333,8 +386,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     serialize: (serializer: Serializer, expr: Expression): string => {
       const style = serializer.options.groupStyle(expr, serializer.level + 1);
 
-      const arg1 = op(expr, 1);
-      const h1 = head(arg1);
+      const arg1 = operand(expr, 1);
       let delims = {
         Set: '{,}',
         List: '[,]',
@@ -344,7 +396,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
         Triple: '(,)',
         Sequence: '(,)',
         String: '""',
-      }[typeof h1 === 'string' ? h1 : ''];
+      }[operator(arg1)];
 
       const items = delims ? arg1 : (['Sequence', arg1] as Expression);
 
@@ -352,7 +404,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
 
       // Check if there are custom delimiters specified
       if (nops(expr) > 1) {
-        const op2 = stringValue(op(expr, 2));
+        const op2 = stringValue(operand(expr, 2));
         if (typeof op2 === 'string' && op2.length <= 3) delims = op2;
       }
 
@@ -375,8 +427,8 @@ export const DEFINITIONS_CORE: LatexDictionary = [
   {
     name: 'Domain',
     serialize: (serializer, expr) => {
-      if (head(expr) === 'Error') return serializer.serialize(expr);
-      return `\\mathbf{${serializer.serialize(op(expr, 1))}}`;
+      if (operator(expr) === 'Error') return serializer.serialize(expr);
+      return `\\mathbf{${serializer.serialize(operand(expr, 1))}}`;
     },
   },
   {
@@ -402,7 +454,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
   {
     name: 'Error',
     serialize: (serializer, expr) => {
-      const op1 = op(expr, 1);
+      const op1 = operand(expr, 1);
       if (stringValue(op1) === 'missing')
         return `\\error{${
           serializer.options.missingSymbol ?? '\\placeholder{}'
@@ -411,17 +463,19 @@ export const DEFINITIONS_CORE: LatexDictionary = [
       const where = errorContextAsLatex(serializer, expr) || '\\blacksquare';
 
       const code =
-        head(op1) === 'ErrorCode' ? stringValue(op(op1, 1)) : stringValue(op1);
+        operator(op1) === 'ErrorCode'
+          ? stringValue(operand(op1, 1))
+          : stringValue(op1);
 
       if (code === 'incompatible-domain') {
-        if (symbol(op(op1, 3)) === 'Undefined') {
+        if (symbol(operand(op1, 3)) === 'Undefined') {
           return `\\mathtip{\\error{${where}}}{\\notin ${serializer.serialize(
-            op(op1, 2)
+            operand(op1, 2)
           )}}`;
         }
         return `\\mathtip{\\error{${where}}}{\\in ${serializer.serialize(
-          op(op1, 3)
-        )}\\notin ${serializer.serialize(op(op1, 2))}}`;
+          operand(op1, 3)
+        )}\\notin ${serializer.serialize(operand(op1, 2))}}`;
       }
 
       // if (code === 'missing') {
@@ -438,7 +492,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
   {
     name: 'ErrorCode',
     serialize: (serializer, expr) => {
-      const code = stringValue(op(expr, 1));
+      const code = stringValue(operand(expr, 1));
 
       if (code === 'missing')
         return serializer.options.missingSymbol ?? '\\placeholder{}';
@@ -462,7 +516,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
   {
     name: 'FromLatex',
     serialize: (_serializer, expr) => {
-      return `\\texttt{${sanitizeLatex(stringValue(op(expr, 1)))}}`;
+      return `\\texttt{${sanitizeLatex(stringValue(operand(expr, 1)))}}`;
     },
   },
 
@@ -568,36 +622,37 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     precedence: 10,
     parse: parseRange,
     serialize: (serializer: Serializer, expr: Expression): string => {
-      const args = ops(expr);
-      if (args === null) return '';
-      if (args.length === 1) return '1..' + serializer.serialize(op(expr, 1));
+      const args = operands(expr);
+      if (args.length === 0) return '';
+      if (args.length === 1)
+        return '1..' + serializer.serialize(operand(expr, 1));
       if (args.length === 2)
         return (
-          serializer.wrap(op(expr, 1), 10) +
+          serializer.wrap(operand(expr, 1), 10) +
           '..' +
-          serializer.wrap(op(expr, 2), 10)
+          serializer.wrap(operand(expr, 2), 10)
         );
       if (args.length === 3) {
-        const step = machineValue(op(expr, 3));
-        const start = machineValue(op(expr, 1));
+        const step = machineValue(operand(expr, 3));
+        const start = machineValue(operand(expr, 1));
         if (step !== null && start !== null) {
           return (
-            serializer.wrap(op(expr, 1), 10) +
+            serializer.wrap(operand(expr, 1), 10) +
             ',' +
             serializer.wrap(start + step, 10) +
             '..' +
-            serializer.wrap(op(expr, 2), 10)
+            serializer.wrap(operand(expr, 2), 10)
           );
         }
 
         return (
-          serializer.wrap(op(expr, 1), 10) +
+          serializer.wrap(operand(expr, 1), 10) +
           ',' +
-          (serializer.wrap(op(expr, 3), ADDITION_PRECEDENCE) +
+          (serializer.wrap(operand(expr, 3), ADDITION_PRECEDENCE) +
             '+' +
-            serializer.wrap(op(expr, 3), ADDITION_PRECEDENCE)) +
+            serializer.wrap(operand(expr, 3), ADDITION_PRECEDENCE)) +
           '..' +
-          serializer.wrap(op(expr, 2), 10)
+          serializer.wrap(operand(expr, 2), 10)
         );
       }
       return '';
@@ -623,8 +678,8 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     latexTrigger: ['\\text'],
     parse: (scanner) => parseTextRun(scanner),
     serialize: (serializer: Serializer, expr: Expression): string => {
-      const args = ops(expr);
-      if (args === null || args.length === 0) return '\\text{}';
+      const args = operands(expr);
+      if (args.length === 0) return '\\text{}';
       return joinLatex([
         '\\text{',
         args.map((x) => serializer.serialize(x)).join(''),
@@ -639,13 +694,13 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     serialize: (serializer: Serializer, expr: Expression): string => {
       if (nops(expr) === 2) {
         return (
-          serializer.serialize(op(expr, 1)) +
+          serializer.serialize(operand(expr, 1)) +
           '_{' +
-          serializer.serialize(op(expr, 2)) +
+          serializer.serialize(operand(expr, 2)) +
           '}'
         );
       }
-      return '_{' + serializer.serialize(op(expr, 1)) + '}';
+      return '_{' + serializer.serialize(operand(expr, 1)) + '}';
     },
   },
   { name: 'Superplus', latexTrigger: ['^', '+'], kind: 'postfix' },
@@ -678,12 +733,12 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     kind: 'postfix',
     parse: (parser: Parser, lhs: Expression) => parsePrime(parser, lhs, 1),
     serialize: (serializer, expr) => {
-      const n2 = machineValue(op(expr, 2)) ?? 1;
-      const base = serializer.serialize(op(expr, 1));
+      const n2 = machineValue(operand(expr, 2)) ?? 1;
+      const base = serializer.serialize(operand(expr, 1));
       if (n2 === 1) return base + '^\\prime';
       if (n2 === 2) return base + '^\\doubleprime';
       if (n2 === 3) return base + '^\\tripleprime';
-      return base + '^{(' + serializer.serialize(op(expr, 2)) + ')}';
+      return base + '^{(' + serializer.serialize(operand(expr, 2)) + ')}';
     },
   },
   {
@@ -787,7 +842,7 @@ export const DEFINITIONS_CORE: LatexDictionary = [
       return ['InverseFunction', lhs];
     },
     serialize: (serializer, expr) =>
-      serializer.serialize(op(expr, 1)) + '^{-1}',
+      serializer.serialize(operand(expr, 1)) + '^{-1}',
   },
   // Lagrange notation
   {
@@ -798,13 +853,13 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     // @todo: Newton notation: `\dot{v}` -> first derivative relative to time t `\ddot{v}` -> second derivative relative to time t
 
     serialize: (serializer: Serializer, expr: Expression): string => {
-      const degree = machineValue(op(expr, 2)) ?? 1;
-      const base = serializer.serialize(op(expr, 1));
+      const degree = machineValue(operand(expr, 2)) ?? 1;
+      const base = serializer.serialize(operand(expr, 1));
       if (degree === 1) return base + '^{\\prime}';
       if (degree === 2) return base + '^{\\doubleprime}';
       if (degree === 3) return base + '^{\\tripleprime}';
 
-      return base + '^{(' + serializer.serialize(op(expr, 2)) + ')}';
+      return base + '^{(' + serializer.serialize(operand(expr, 2)) + ')}';
     },
   },
   {
@@ -814,8 +869,8 @@ export const DEFINITIONS_CORE: LatexDictionary = [
     parse: parseWhich,
     serialize: (serialize: Serializer, expr: Expression): string => {
       const rows: string[] = [];
-      const args = ops(expr);
-      if (args) {
+      const args = operands(expr);
+      if (args.length > 0) {
         for (let i = 0; i <= args.length - 2; i += 2) {
           const row: string[] = [];
           row.push(serialize.serialize(args[i + 1]));
@@ -891,7 +946,7 @@ function parseTextRun(
       if (color !== null) {
         // Stash the current text/runinstyle
         if (runinStyle !== null && text) {
-          runs.push(['Style', text, { dict: runinStyle }]);
+          runs.push(['Style', text, dictionaryFrom(runinStyle)]);
         } else if (text) {
           runs.push(['String', text]);
         }
@@ -975,7 +1030,7 @@ function parseTextRun(
 
   // Apply leftovers
   if (runinStyle !== null && text) {
-    runs.push(['Style', `'${text}'`, { dict: runinStyle }]);
+    runs.push(['Style', `'${text}'`, dictionaryFrom(runinStyle)]);
   } else if (text) {
     runs.push(`'${text}'`);
   }
@@ -988,7 +1043,7 @@ function parseTextRun(
     else body = ['String', ...runs];
   }
 
-  return style ? ['Style', body, { dict: style }] : body;
+  return style ? ['Style', body, dictionaryFrom(style)] : body;
 }
 
 function serializeLatexTokens(
@@ -1037,12 +1092,13 @@ function errorContextAsLatex(
   serializer: Serializer,
   error: Expression
 ): string {
-  const arg = op(error, 2);
+  const arg = operand(error, 2);
   if (!arg) return '';
 
-  if (head(arg) === 'LatexString') return stringValue(op(arg, 1)) ?? '';
+  if (operator(arg) === 'LatexString')
+    return stringValue(operand(arg, 1)) ?? '';
 
-  if (head(arg) === 'Hold') return serializer.serialize(op(arg, 1));
+  if (operator(arg) === 'Hold') return serializer.serialize(operand(arg, 1));
 
   return serializer.serialize(arg);
 }
@@ -1053,17 +1109,17 @@ function parsePrime(
   order: number
 ): Expression | null {
   // If the lhs is a Prime/Derivative, increase the derivation order
-  const lhsh = head(lhs);
+  const lhsh = operator(lhs);
   if (lhsh === 'Derivative' || lhsh === 'Prime') {
-    const n = machineValue(op(lhs, 2)) ?? 1;
-    return [lhsh, missingIfEmpty(op(lhs, 1)), n + order];
+    const n = machineValue(operand(lhs, 2)) ?? 1;
+    return [lhsh, missingIfEmpty(operand(lhs, 1)), n + order];
   }
 
   // If the lhs is a function, return the derivative
   // i.e. f' -> Derivative(f)
 
   const sym = symbol(lhs);
-  if ((sym && parser.getIdentifierType(sym) === 'function') || head(lhs)) {
+  if ((sym && parser.getIdentifierType(sym) === 'function') || operator(lhs)) {
     if (order === 1) return ['Derivative', lhs];
     return ['Derivative', lhs, order];
   }
@@ -1086,21 +1142,25 @@ function parseParenDelimiter(
   // `canonicalInvisibleOperator()`
   if (body === null || isEmptySequence(body)) return ['Delimiter'];
 
-  const h = head(body);
+  const h = operator(body);
   // We have a Delimiter inside parens: e.g. `(a, b, c)` with `a, b, c` the
   // Delimiter function.
-  if (h === 'Delimiter' && op(body, 2)) {
-    const delims = stringValue(op(body, 2));
+  if (h === 'Delimiter' && operand(body, 2)) {
+    const delims = stringValue(operand(body, 2));
     if (delims?.length === 1) {
       // We have a Delimiter with a single character separator
-      return ['Delimiter', op(body, 1) ?? ['Sequence'], { str: `(${delims})` }];
+      return [
+        'Delimiter',
+        operand(body, 1) ?? ['Sequence'],
+        { str: `(${delims})` },
+      ];
     }
   }
 
   // @todo: does this codepath ever get hit?
   if (h === 'Matrix') {
-    const delims = stringValue(op(body, 2)) ?? '..';
-    if (delims === '..') return ['Matrix', op(body, 1)!];
+    const delims = stringValue(operand(body, 2)) ?? '..';
+    if (delims === '..') return ['Matrix', operand(body, 1)!];
   }
 
   return ['Delimiter', body];
@@ -1127,21 +1187,23 @@ function parseParenDelimiter(
 function parseBrackets(parser: Parser, body: Expression | null): Expression {
   if (body === null || isEmptySequence(body)) return ['List'];
 
-  const h = head(body);
+  const h = operator(body);
   if (h === 'Range' || h === 'Linspace') return body;
-  if (h === 'Sequence') return ['List', ...(ops(body) ?? [])];
+  if (h === 'Sequence') return ['List', ...operands(body)];
 
   if (h === 'Delimiter') {
-    const delim = stringValue(op(body, 2)) ?? '...';
+    const delim = stringValue(operand(body, 2)) ?? '...';
     if (delim === ';' || delim === '.;.') {
       return [
         'List',
-        ...(ops(op(body, 1)) ?? []).map((x) => parseBrackets(parser, x)),
+        ...(operands(operand(body, 1)) ?? []).map((x) =>
+          parseBrackets(parser, x)
+        ),
       ];
     }
     if (delim === ',' || delim === '.,.') {
-      body = op(body, 1);
-      if (head(body) === 'Sequence') return ['List', ...(ops(body) ?? [])];
+      body = operand(body, 1);
+      if (operator(body) === 'Sequence') return ['List', ...operands(body)];
       return ['List', body ?? ['Sequence']];
     }
   }
@@ -1160,15 +1222,15 @@ function parseRange(parser: Parser, lhs: Expression): Expression | null {
   // Is there a step implied? e.g. "1,3..10"
   let start: Expression | null = null;
   let second: Expression | null = null;
-  if (head(lhs) === 'Sequence') {
+  if (operator(lhs) === 'Sequence') {
     if (nops(lhs) !== 2) return null;
-    start = op(lhs, 1);
-    second = op(lhs, 2);
+    start = operand(lhs, 1);
+    second = operand(lhs, 2);
     if (second === null) {
       parser.index = index;
       return null;
     }
-  } else start = op(lhs, 1);
+  } else start = operand(lhs, 1);
 
   if (start === null) return null;
 
@@ -1233,11 +1295,11 @@ function parseAssign(parser: Parser, lhs: Expression): Expression | null {
 
   // Do we have an assignment of the form `f(x) := ...`?
   if (
-    head(lhs) === 'InvisibleOperator' &&
+    operator(lhs) === 'InvisibleOperator' &&
     nops(lhs) === 2 &&
-    head(op(lhs, 2)) === 'Delimiter'
+    operator(operand(lhs, 2)) === 'Delimiter'
   ) {
-    const fn = symbol(op(lhs, 1));
+    const fn = symbol(operand(lhs, 1));
     if (!fn) return null;
 
     const rhs = parser.parseExpression({ minPrec: 0 });
@@ -1246,9 +1308,9 @@ function parseAssign(parser: Parser, lhs: Expression): Expression | null {
       return null;
     }
 
-    const delimBody = op(op(lhs, 2), 1);
+    const delimBody = operand(operand(lhs, 2), 1);
     let args: Expression[] = [];
-    if (head(delimBody) === 'Sequence') args = ops(delimBody) ?? [];
+    if (operator(delimBody) === 'Sequence') args = operands(delimBody);
     else if (delimBody) args = [delimBody!];
 
     return ['Assign', fn, ['Function', rhs, ...(args ?? [])]];
@@ -1256,9 +1318,9 @@ function parseAssign(parser: Parser, lhs: Expression): Expression | null {
 
   // If this is a previously defined function, the lhs might be a
   // function application...
-  if (typeof head(lhs) === 'string') {
-    const fn = head(lhs) as string;
-    const args = ops(lhs) ?? [];
+  const fn = operator(lhs);
+  if (fn) {
+    const args = operands(lhs);
     const rhs = parser.parseExpression({ minPrec: 0 });
     if (rhs === null) {
       parser.index = index;
@@ -1284,7 +1346,7 @@ function parseWhich(parser: Parser): Expression | null {
   // Note: return `True` for the condition, because it must be present
   // as the second element of the Tuple. Return an empty sequence for the
   // value, because it is optional
-  const result: Expression = ['Which'];
+  const result: Expression[] = [];
   for (const row of tabular) {
     if (row.length === 1) {
       result.push('True');
@@ -1292,17 +1354,17 @@ function parseWhich(parser: Parser): Expression | null {
     } else if (row.length === 2) {
       const s = stringValue(row[1]);
       // If a string, probably 'else' or 'otherwise'
-      result.push(s ? 'True' : stripText(row[1]) ?? 'True');
+      result.push(s ? 'True' : (stripText(row[1]) ?? 'True'));
       result.push(row[0]);
     }
   }
-  return result;
+  return ['Which', ...result];
 }
 
 function parseAt(...close: string[]): (parser, lhs) => Expression | null {
   return (parser: Parser, lhs: Expression): Expression | null => {
     // If the lhs is a symbol or a List literal...
-    if (!symbol(lhs) && head(lhs) !== 'List') return null;
+    if (!symbol(lhs) && operator(lhs) !== 'List') return null;
     const index = parser.index;
 
     let rhs: Expression | null = null;
@@ -1318,8 +1380,8 @@ function parseAt(...close: string[]): (parser, lhs) => Expression | null {
       return null;
     }
 
-    if (head(rhs) === 'Delimiter') rhs = op(rhs, 1) ?? ['Sequence'];
-    if (head(rhs) === 'Sequence') return ['At', lhs, ...ops(rhs)!];
+    if (operator(rhs) === 'Delimiter') rhs = operand(rhs, 1) ?? ['Sequence'];
+    if (operator(rhs) === 'Sequence') return ['At', lhs, ...operands(rhs)];
     return ['At', lhs, rhs];
   };
 }

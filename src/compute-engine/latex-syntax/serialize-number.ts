@@ -1,4 +1,4 @@
-import { Expression } from '../../math-json/math-json-format';
+import { Expression } from '../../math-json/types';
 import { NumberFormat, NumberSerializationFormat } from './public';
 
 // Some vocabulary:
@@ -616,11 +616,6 @@ function insertWholeGroupSeparator(
   options: NumberSerializationFormat
 ): string {
   return insertGroupSeparator(numberString, options, 0);
-}
-
-interface Result {
-  newWholePart: string;
-  newFractionalPart: string;
 }
 
 // Given a whole part, fractional part and exponent, return a new whole part

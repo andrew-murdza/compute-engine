@@ -4,6 +4,8 @@ import { Decimal } from 'decimal.js';
 import { extrapolate } from './richardson';
 import { primeFactors } from './primes';
 
+export const DEFAULT_PRECISION = 300;
+
 export const MACHINE_PRECISION_BITS = 53;
 export const MACHINE_PRECISION = Math.log10(
   Math.pow(2, MACHINE_PRECISION_BITS)
@@ -17,8 +19,11 @@ export const MACHINE_TOLERANCE = Math.pow(
   -(MACHINE_PRECISION_BITS - MACHINE_TOLERANCE_BITS)
 );
 
-// Positive values smaller than NUMERIC_TOLERANCE are considered to be zero
-export const NUMERIC_TOLERANCE = Math.pow(10, -10);
+//
+
+// Positive values smaller than tolerance are considered to be zero
+export const NUMERIC_MACHINE_TOLERANCE = 1e-10;
+export const NUMERIC_BIGNUM_TOLERANCE = 1e-290;
 
 // When applying simplifications, only considers integers whose absolute value
 // is less than SMALL_INTEGER. This avoid loss of precision by preventing
@@ -32,7 +37,7 @@ export const SMALL_INTEGER = 1000000;
 export const MAX_ITERATION = 1000000;
 
 // When doing a symbolic calculations using multiple terms, do
-// not expand beyond these many terms
+// not expand beyond this many terms
 export const MAX_SYMBOLIC_TERMS = 200;
 
 /**
@@ -65,50 +70,49 @@ export function nextDown(x: number): number {
 
 /* @todo Consider https://cp-algorithms.com/algebra/factorization.html */
 
-/**
- * Return a, b, c such that n = a * b^c
- * @param n
- *
- */
-export function canonicalInteger(n: number): [a: number, b: number, c: number] {
-  console.assert(Number.isInteger(n));
-  if (n === 0) return [0, 1, 1];
-  let sign = 1;
-  if (n < 0) {
-    n = -n;
-    sign = -1;
-  }
-  if (n === 1) return [sign, 1, 1];
-  const factors = primeFactors(n);
-  let a = 1;
-  let b = 1;
-  let c = 1;
-  for (const k of Object.keys(factors)) {
-    const v = parseInt(k);
-    if (factors[k] % 2 === 0) {
-      a = a * Math.pow(v, factors[k] / 2);
-    } else {
-      b = b * v;
-      c = c * factors[k];
-    }
-  }
-  return [sign * a, b, c];
-}
-
 /** Return `[factor, root]` such that
  * pow(n, 1/exponent) = factor * pow(root, 1/exponent)
  *
- * factorPower(75, 2) -> [5, 3] = 5^2 * 3
+ * canonicalInteger(75, 2) -> [5, 3] = 5^2 * 3
  *
  */
-export function factorPower(
+export function canonicalInteger(
   n: number,
   exponent: number
-): [factor: number, root: number] {
+): readonly [factor: number, root: number] {
   if (n >= Number.MAX_SAFE_INTEGER) return [1, n];
   if (n === 0) return [0, 0];
+  if (n === 1) return [1, 1];
   // @todo: handle negative n
   console.assert(Number.isInteger(n) && n > 0 && n < Number.MAX_SAFE_INTEGER);
+  if (exponent === 2) {
+    const result = (
+      [
+        [0, 0],
+        [1, 1],
+        [1, 2],
+        [1, 3],
+        [2, 1],
+        [1, 5],
+        [1, 6],
+        [1, 7],
+        [1, 8],
+        [3, 1],
+        [1, 10],
+        [1, 11],
+        [2, 3],
+        [1, 13],
+        [1, 14],
+        [1, 15],
+        [4, 1],
+        [1, 17],
+        [3, 2],
+        [1, 19],
+        [1, 20],
+      ] as const
+    )[n];
+    if (result) return result;
+  }
   const factors = primeFactors(n);
   let f = 1;
   let r = 1;
@@ -441,7 +445,7 @@ export function limit(f: (x: number) => number, x: number, dir = 1): number {
     return (left + right) / 2;
   }
 
-  const [val, err] = extrapolate(f, x, { step: dir > 0 ? 1 : -1 });
+  const [val, _err] = extrapolate(f, x, { step: dir > 0 ? 1 : -1 });
   return val;
 }
 

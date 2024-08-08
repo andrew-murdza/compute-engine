@@ -7,7 +7,7 @@ import {
   monteCarloEstimate,
 } from '../numerics/numeric';
 import { BoxedExpression, IdentifierDefinitions } from '../public';
-import { differentiate } from '../symbolic/derivative';
+import { derivative, differentiate } from '../symbolic/derivative';
 
 export const CALCULUS_LIBRARY: IdentifierDefinitions[] = [
   {
@@ -69,26 +69,28 @@ volumes
     //
 
     //
-    // Represents the functional derivative of a function.
+    // **Derivative**
     //
-    // This can be considered a more primitive form of the Derivative. In
-    // most cases users will use the `D` function instead of this one.
+    // Returns a function that represents the derivative of the
+    // given function.
+    //
+    // In contrast to the `D` function, the `Derivative` function
+    // returns a function that represents the derivative of the given
+    // function, rather than the result of evaluating the derivative
+    // at a given point.
+
+    // `['Derivative', f]` < = > `["D", ["Apply", f, "x"], "x"]`
+    //
     //
     // ["Derivative", "Sin"]
     //    -> "Cos"
     //
     // ["Derivative", ["Function", ["Square", "x"], "x"], 2]
-    //    -> ["Function", ["Multiply", 2, "x"], "x"]
+    //    -> "2"
     //
-    // The "2" indicates the order of the derivative, and that the first
-    // argument of the function is the variable with respect to which the
-    // derivative is taken.
+    // The argument "2" of the `Derivative` function indicates the order
+    // of the derivative.
     //
-    // ["Derivative", ["Function", ["Add", "x", "y"], "x", "y"], 0, 1]
-    //    -> ["Function", "y"], "x", "y"]
-    // The 0 indicate that the first argument of the function (x) is a
-    // constant, while the "1" indicates that the second argument (y) is the
-    // variable with respect to which the derivative is taken.
     //
     // @todo: consider Fractional Calculus, i.e. Louiville-Riemann derivative
     // https://en.wikipedia.org/wiki/Fractional_calculus
@@ -100,39 +102,19 @@ volumes
       signature: {
         domain: [
           'FunctionOf',
-          'Functions',
+          'Anything',
           ['OptArg', 'Numbers'], // The order of the derivative
           'Functions',
         ],
-        canonical: (ce, ops) => {
-          // Is it a function name, i.e. ["Derivative", "Sin"]?
-          if (ops[0].functionDefinition) {
-            return (
-              differentiate(ce._fn(ops[0].canonical, [ce.symbol('_')]), '_')
-                ?.canonical ?? ce._fn('Derivative', ops)
-            );
-          }
-          return ce._fn('Derivative', ops);
-        },
         simplify: (ce, ops) => {
           const expr = ops[0].simplify();
-          if (ops[1]) return ce._fn('Derivative', [expr, ops[1]]);
-
-          return ce._fn('Derivative', [expr]);
+          return ce._fn('Derivative', ops[1] ? [expr, ops[1]] : [expr]);
         },
         evaluate: (ce, ops) => {
           // Is it a function name, i.e. ["Derivative", "Sin"]?
           const op = ops[0].evaluate();
-          if (op.functionDefinition) {
-            return (
-              differentiate(ce._fn(op, [ce.symbol('_')]), '_')?.canonical ??
-              undefined
-            );
-          }
-          // It's a function expression, i.e. ["Derivative", ["Sin", "_"]]
-          const f = differentiate(op, '_');
-          if (!f) return undefined;
-          return f.canonical;
+          const degree = Math.floor(asFloat(ops[1]?.evaluate()) ?? 1);
+          return derivative(op, degree);
         },
       },
     },
@@ -140,10 +122,13 @@ volumes
     //
     // **D: Partial derivative**
     //
-    // ["D", f, "x"] -> If f is an expression of x, derivative of f with respect
-    //                        to x
-    // ["D", f, "x", "x"]
-    // ["D", f, "y", "x"]
+    // Returns the partial derivative of a function with respect to a
+    // variable.
+    //
+    // ["D", "Sin", "x"]
+    //    -> ["Cos", "x"]
+    //
+    // This is equivalent to `["Apply", ["Derivative", "Sin"], "x"]`
 
     D: {
       hold: 'all',
@@ -165,7 +150,7 @@ volumes
           // const vars: BoxedExpression[] = [];
           // for (const param of params) {
           //   let v = param;
-          //   if (v.head === 'ReleaseHold') v = param.op1.evaluate();
+          //   if (v.op === 'ReleaseHold') v = param.op1.evaluate();
           //   if (!v.symbol) {
           //     ce.popScope();
           //     return null;
@@ -196,7 +181,7 @@ volumes
           ce.swapScope(context);
           f = f?.canonical;
           // Avoid recursive evaluation
-          return f?.head === 'D' ? f : f?.evaluate();
+          return f?.operator === 'D' ? f : f?.evaluate();
         },
       },
     },
@@ -236,10 +221,10 @@ volumes
           let upper: BoxedExpression | null = null;
           if (
             range &&
-            range.head !== 'Tuple' &&
-            range.head !== 'Triple' &&
-            range.head !== 'Pair' &&
-            range.head !== 'Single'
+            range.operator !== 'Tuple' &&
+            range.operator !== 'Triple' &&
+            range.operator !== 'Pair' &&
+            range.operator !== 'Single'
           ) {
             index = range;
           } else if (range) {
@@ -251,8 +236,8 @@ volumes
             upper = range.ops?.[2]?.canonical ?? null;
           }
           // The index, if present, should be a symbol
-          if (index && index.head === 'Hold') index = index.op1;
-          if (index && index.head === 'ReleaseHold')
+          if (index && index.operator === 'Hold') index = index.op1;
+          if (index && index.operator === 'ReleaseHold')
             index = index.op1.evaluate();
           index ??= ce.Nothing;
           if (!index.symbol)
@@ -261,14 +246,14 @@ volumes
           // The range bounds, if present, should be numbers
           if (lower) lower = checkDomain(ce, lower, ce.Numbers);
           if (upper) upper = checkDomain(ce, upper, ce.Numbers);
-          if (lower && upper) range = ce.tuple([index, lower, upper]);
-          else if (upper) range = ce.tuple([index, ce.NegativeInfinity, upper]);
-          else if (lower) range = ce.tuple([index, lower]);
+          if (lower && upper) range = ce.tuple(index, lower, upper);
+          else if (upper) range = ce.tuple(index, ce.NegativeInfinity, upper);
+          else if (lower) range = ce.tuple(index, lower);
           else range = index;
 
           let body = ops[0] ?? ce.error('missing');
           body = body.canonical;
-          if (body.head === 'Delimiter' && body.op1.head === 'Sequence')
+          if (body.operator === 'Delimiter' && body.op1.operator === 'Sequence')
             body = body.op1.op1;
 
           return ce._fn('Integrate', [body, range]);
@@ -290,10 +275,9 @@ volumes
         params: ['Functions', 'Numbers', 'Numbers'],
         restParam: 'Numbers',
         evaluate: (ce, ops) => {
-          // Switch to machine mode
-          const numericMode = ce.numericMode;
+          // Switch to machine precision
           const precision = ce.precision;
-          ce.numericMode = 'machine';
+          ce.precision = 'machine';
           const wasStrict = ce.strict;
           ce.strict = false;
 
@@ -303,7 +287,6 @@ volumes
             const f = applicableN1(ops[0]);
             result = ce.number(monteCarloEstimate(f, a, b));
           }
-          ce.numericMode = numericMode;
           ce.precision = precision;
           ce.strict = wasStrict;
           return result;
@@ -339,7 +322,7 @@ volumes
                 return typeof y === 'number' ? y : Number.NaN;
               },
               target,
-              dir ? asFloat(dir) ?? 1 : 1
+              dir ? (asFloat(dir) ?? 1) : 1
             )
           );
         },
@@ -370,7 +353,7 @@ volumes
                 return typeof y === 'number' ? y : Number.NaN;
               },
               target,
-              dir ? asFloat(dir) ?? 1 : 1
+              dir ? (asFloat(dir) ?? 1) : 1
             )
           );
         },

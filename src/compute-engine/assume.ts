@@ -35,17 +35,15 @@ import { findUnivariateRoots } from './solve';
  */
 
 export function assume(proposition: BoxedExpression): AssumeResult {
-  if (proposition.head === 'Element') return assumeElement(proposition);
-  if (proposition.head === 'Equal') return assumeEquality(proposition);
-  // isInequality also returns true for 'Equal', but we have already handled
-  // it above.
+  if (proposition.operator === 'Element') return assumeElement(proposition);
+  if (proposition.operator === 'Equal') return assumeEquality(proposition);
   if (isInequality(proposition)) return assumeInequality(proposition);
 
   return 'not-a-predicate';
 }
 
 function assumeEquality(proposition: BoxedExpression): AssumeResult {
-  console.assert(proposition.head === 'Equal');
+  console.assert(proposition.operator === 'Equal');
   // Four cases:
   // 1/ proposition contains no unnknows
   //    e.g. `2 + 1 = 3`, `\pi + 1 = \pi`
@@ -99,16 +97,12 @@ function assumeEquality(proposition: BoxedExpression): AssumeResult {
     const sols = findUnivariateRoots(proposition, lhs);
     if (sols.length === 0) {
       ce.assumptions.set(
-        ce.box([
-          'Equal',
-          ce.add(proposition.op1.canonical, proposition.op2.neg()).simplify(),
-          0,
-        ]),
+        ce.function('Equal', [proposition.op1.sub(proposition.op2), 0]),
         true
       );
     }
 
-    const val = sols.length === 1 ? sols[0] : ce.box(['List', ...sols]);
+    const val = sols.length === 1 ? sols[0] : ce.function('List', sols);
     const def = ce.lookupSymbol(lhs);
     if (!def) {
       ce.defineSymbol(lhs, { value: val, domain: val.domain });
@@ -146,19 +140,19 @@ function assumeInequality(proposition: BoxedExpression): AssumeResult {
   // Case 1
   if (proposition.op1!.symbol && !hasDef(ce, proposition.op1!.symbol)) {
     if (proposition.op2.evaluate().isZero) {
-      if (proposition.head === 'Less') {
+      if (proposition.operator === 'Less') {
         ce.defineSymbol(proposition.op1.symbol, {
           domain: ce.domain('NegativeNumbers'),
         });
-      } else if (proposition.head === 'LessEqual') {
+      } else if (proposition.operator === 'LessEqual') {
         ce.defineSymbol(proposition.op1.symbol, {
           domain: ce.domain('NonPositiveNumbers'),
         });
-      } else if (proposition.head === 'Greater') {
+      } else if (proposition.operator === 'Greater') {
         ce.defineSymbol(proposition.op1.symbol, {
           domain: ce.domain('PositiveNumbers'),
         });
-      } else if (proposition.head === 'GreaterEqual') {
+      } else if (proposition.operator === 'GreaterEqual') {
         ce.defineSymbol(proposition.op1.symbol, {
           domain: ce.domain('NonNegativeNumbers'),
         });
@@ -177,25 +171,25 @@ function assumeInequality(proposition: BoxedExpression): AssumeResult {
   let op = '';
   let lhs: BoxedExpression;
   let rhs: BoxedExpression;
-  if (proposition.head === 'Less') {
+  if (proposition.operator === 'Less') {
     lhs = proposition.op1;
     rhs = proposition.op2;
     op = '<';
-  } else if (proposition.head === 'LessEqual') {
+  } else if (proposition.operator === 'LessEqual') {
     lhs = proposition.op1;
     rhs = proposition.op2;
     op = '<=';
-  } else if (proposition.head === 'Greater') {
+  } else if (proposition.operator === 'Greater') {
     lhs = proposition.op2;
     rhs = proposition.op1;
     op = '<';
-  } else if (proposition.head === 'GreaterEqual') {
+  } else if (proposition.operator === 'GreaterEqual') {
     lhs = proposition.op2;
     rhs = proposition.op1;
     op = '<=';
   }
   if (!op) return 'internal-error';
-  const p = ce.add(lhs!.canonical, rhs!.neg()).simplify();
+  const p = lhs!.sub(rhs!);
 
   // Case 2
   const result = ce.box([op === '<' ? 'Less' : 'LessEqual', p, 0]).evaluate();
@@ -213,13 +207,13 @@ function assumeInequality(proposition: BoxedExpression): AssumeResult {
   }
 
   // Case 3, 4
-  console.assert(result.head === 'Less' || result.head === 'LessEqual');
+  console.assert(result.operator === 'Less' || result.operator === 'LessEqual');
   ce.assumptions.set(result, true);
   return 'ok';
 }
 
 function assumeElement(proposition: BoxedExpression): AssumeResult {
-  console.assert(proposition.head === 'Element');
+  console.assert(proposition.operator === 'Element');
 
   // Four cases:
   // 1/ lhs is a single free variable with no definition

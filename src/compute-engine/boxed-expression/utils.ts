@@ -1,11 +1,12 @@
 import { Decimal } from 'decimal.js';
 
-import { Expression } from '../../math-json/math-json-format';
+import { Expression } from '../../math-json/types';
 import { isNumberExpression, isNumberObject } from '../../math-json/utils';
 import { bigint } from '../numerics/numeric-bigint';
 import { joinLatex } from '../latex-syntax/tokenizer';
 import { DEFINITIONS_INEQUALITIES } from '../latex-syntax/dictionary/definitions-relational-operators';
-import { BoxedExpression, IComputeEngine } from './public';
+import type { BoxedExpression, IComputeEngine } from './public';
+import { MACHINE_PRECISION } from '../numerics/numeric';
 
 export function isBoxedExpression(x: unknown): x is BoxedExpression {
   return typeof x === 'object' && x !== null && 'engine' in x;
@@ -16,15 +17,7 @@ export function isBoxedExpression(x: unknown): x is BoxedExpression {
  * bignums. If `bignumPreferred()` is false, calculate using machine numbers
  */
 export function bignumPreferred(ce: IComputeEngine): boolean {
-  return ce.numericMode === 'bignum' || ce.numericMode === 'auto';
-}
-
-/** When result of a numeric evaluation is a complex number,
- * return `NaN` if not `complexallowed()`
- */
-
-export function complexAllowed(ce: IComputeEngine): boolean {
-  return ce.numericMode === 'auto' || ce.numericMode === 'complex';
+  return ce.precision > MACHINE_PRECISION;
 }
 
 export function isLatexString(s: unknown): s is string {
@@ -140,10 +133,10 @@ export function normalizedUnknownsForSolve(
 //   expr: BoxedExpression,
 //   result: Set<string>
 // ): void {
-//   const h = expr.head;
+//   const h = expr.op;
 //   if (h !== 'Block') return;
 //   for (const statement of expr.ops!)
-//     if (statement.head === 'Declare') {
+//     if (statement.op === 'Declare') {
 //       const id = statement.op1.symbol;
 //       if (id) result.add(id);
 //     }
@@ -155,7 +148,7 @@ export function isRelationalOperator(name: BoxedExpression | string): boolean {
 }
 
 export function isInequality(expr: BoxedExpression): boolean {
-  const h = expr.head;
+  const h = expr.operator;
   if (typeof h !== 'string') return false;
-  return ['Equal', 'Less', 'LessEqual', 'Greater', 'GreaterEqual'].includes(h);
+  return ['Less', 'LessEqual', 'Greater', 'GreaterEqual'].includes(h);
 }

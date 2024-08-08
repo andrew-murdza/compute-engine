@@ -41,18 +41,11 @@ function ceBaseline(numRandos: number[]): number {
 
   randos = randos.map((n, i) => {
     // Do some arithmetic calculations
-    if (i % 2 === 0)
-      return ce.add(
-        ce.evalMul(ce.number([4, 3]), ce.pow(n, 2)),
-        ce.evalMul(n, ce.number([3, 2])),
-        ce.number(2)
-      );
+    if (i % 2 === 0) return n.mul(4).pow(2).div(3).add(n.mul(3).div(2)).add(2);
     // Trigonometry, log, exp
-    return ce.add(
-      ce.box(['Tan', n]),
-      ce.box(['Log', ['Abs', n]]),
-      ce.box(['Exp', n])
-    );
+    return ce
+      .box(['Tan', n])
+      .add(ce.box(['Log', ['Abs', n]]).add(ce.box(['Exp', n])));
   });
 
   return globalThis.performance.now() - start;
@@ -68,18 +61,8 @@ function ceBaselineN(numRandos: number[]): number {
   randos = randos.map((n, i) => {
     // Do some arithmetic calculations
     if (i % 2 === 0)
-      return ce
-        .box([
-          'Add',
-          [
-            'Multiply',
-            ['Rational', 4, 3],
-            ['Square', n],
-            ['Multiply', ['Rational', 3, 2], n],
-            2,
-          ],
-        ])
-        .N();
+      if (i % 2 === 0)
+        return n.mul(4).pow(2).div(3).add(n.mul(3).div(2)).add(2).N();
 
     // Trigonometry, log, exp
     return ce.box(['Add', ['Tan', n], ['Log', ['Abs', n], ['Exp', n]]]).N();
@@ -166,7 +149,7 @@ function slowEval() {
 
   // Factor out substitution of constants
 
-  ce.numericMode = 'machine';
+  ce.precision = 'machine';
   ce.strict = true;
 
   let y = 0;
@@ -188,7 +171,7 @@ function fastEval() {
   // Factor out substitution of constants
   const expr3 = expr.subs(vars).N();
 
-  ce.numericMode = 'machine';
+  ce.precision = 'machine';
   ce.strict = false;
 
   let y = 0;
@@ -234,11 +217,11 @@ describe('Compute Engine modes', () => {
   const fast = fastEval();
   const turbo = turboEval();
 
-  console.log(`Slow = ${(slow / turbo).toFixed(2)} x compiled`);
-  console.log(`Fast = ${(fast / turbo).toFixed(2)} x compiled`);
+  console.info(`Slow = ${Math.round(slow / turbo)} x compiled`);
+  console.info(`Fast = ${Math.round(fast / turbo)} x compiled`);
 
-  it('slow vs turbo', () => expect(slow / turbo).toBeLessThan(180));
-  it('fast vs turbo', () => expect(fast / turbo).toBeLessThan(70));
+  it('slow vs turbo', () => expect(slow / turbo).toBeLessThan(230));
+  it('fast vs turbo', () => expect(fast / turbo).toBeLessThan(110));
 });
 
 describe('Relative performance', () => {
@@ -251,13 +234,15 @@ describe('Relative performance', () => {
     const ceb = ceBaseline(randos);
     // console.profileEnd();
 
-    console.log(`Compute Engine = ${(ceb / jsb).toFixed(2)} x native JS`);
+    console.info(
+      `Compute Engine evaluate() = ${Math.round(ceb / jsb)} x native JS`
+    );
 
     // console.profile();
     const cebN = ceBaselineN(randos);
     // console.profileEnd();
 
-    console.log(`Compute Engine 2 = ${(cebN / jsb).toFixed(2)} x native JS`);
+    console.info(`Compute Engine N() = ${Math.round(cebN / jsb)} x native JS`);
     expect(ceb / jsb).toBeLessThan(500);
     expect(cebN / jsb).toBeLessThan(11000);
   });

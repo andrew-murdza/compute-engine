@@ -8,7 +8,7 @@ import {
   LatexString,
 } from '../public';
 import { asLatexString, bignumPreferred } from '../boxed-expression/utils';
-import { Expression } from '../../math-json/math-json-format';
+import { Expression } from '../../math-json/types';
 import { applyN, apply2N } from '../symbolic/utils';
 import { checkArity } from '../boxed-expression/validate';
 import { reducedRational } from '../numerics/rationals';
@@ -66,17 +66,16 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
               const fRadians = reducedRational([fArg, 180]);
               if (fRadians[0] === 0) return ce.Zero;
               if (fRadians[0] === 1 && fRadians[1] === 1) return ce.Pi;
-              if (fRadians[0] === 1)
-                return ce.div(ce.Pi, ce.number(fRadians[1]));
-              return ce.evalMul(ce.number(fRadians), ce.Pi);
+              if (fRadians[0] === 1) return ce.Pi.div(fRadians[1]);
+              return ce.number(fRadians).mul(ce.Pi);
             }
-            return ce.evalMul(ce.div(ce.number(fArg), ce.number(180)), ce.Pi);
+            return ce.number(fArg).div(180).mul(ce.Pi);
           }
-          return ce.div(ce.evalMul(arg, ce.Pi), ce.number(180));
+          return arg.mul(ce.Pi).div(180);
         },
         evaluate: (ce, ops) => {
           if (ce.angularUnit === 'deg') return ops[0];
-          return ce.evalMul(ops[0], ce.div(ce.Pi, ce.number(180))).evaluate();
+          return ops[0].mul(ce.Pi.div(180)).evaluate();
         },
       },
     },
@@ -97,9 +96,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: ['FunctionOf', 'Numbers', 'Numbers'],
-        simplify: (ce, ops) => constructibleValues(ce, 'Sin', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Sin', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Sin', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Sin', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Sin', ops[0]),
+        N: (ce, ops) => evalTrig('Sin', ops[0]),
       },
     },
   },
@@ -114,9 +113,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arctan'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Arctan', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arctan', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arctan', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Arctan', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arctan', ops[0]),
+        N: (ce, ops) => evalTrig('Arctan', ops[0]),
       },
     },
     Arctan2: {
@@ -134,9 +133,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: ['FunctionOf', 'Numbers', 'Numbers'],
-        simplify: (ce, ops) => constructibleValues(ce, 'Cos', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Cos', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Cos', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Cos', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Cos', ops[0]),
+        N: (ce, ops) => evalTrig('Cos', ops[0]),
       },
     },
 
@@ -146,9 +145,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: trigFunction('Tan'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Tan', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Tan', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Tan', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Tan', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Tan', ops[0]),
+        N: (ce, ops) => evalTrig('Tan', ops[0]),
       },
     },
     /* converts (x, y) -> (radius, angle) */
@@ -167,9 +166,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Arcosh'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Arcosh', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arcosh', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arcosh', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Arcosh', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arcosh', ops[0]),
+        N: (ce, ops) => evalTrig('Arcosh', ops[0]),
       },
     },
     Arcsin: {
@@ -177,9 +176,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Arcsin'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Arcsin', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arcsin', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arcsin', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Arcsin', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arcsin', ops[0]),
+        N: (ce, ops) => evalTrig('Arcsin', ops[0]),
       },
     },
     //Note: Arsinh, not ArCsinh
@@ -188,9 +187,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Arsinh'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Arsinh', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arsinh', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arsinh', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Arsinh', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arsinh', ops[0]),
+        N: (ce, ops) => evalTrig('Arsinh', ops[0]),
       },
     },
     Artanh: {
@@ -198,9 +197,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Artanh'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Artanh', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Artanh', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Artanh', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Artanh', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Artanh', ops[0]),
+        N: (ce, ops) => evalTrig('Artanh', ops[0]),
       },
     },
     Cosh: {
@@ -208,9 +207,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Cosh'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Cosh', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Cosh', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Cosh', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Cosh', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Cosh', ops[0]),
+        N: (ce, ops) => evalTrig('Cosh', ops[0]),
       },
     },
     Cot: {
@@ -218,9 +217,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: trigFunction('Cot'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Cot', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Cot', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Cot', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Cot', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Cot', ops[0]),
+        N: (ce, ops) => evalTrig('Cot', ops[0]),
       },
     },
     Csc: {
@@ -229,9 +228,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: trigFunction('Csc'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Csc', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Csc', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Csc', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Csc', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Csc', ops[0]),
+        N: (ce, ops) => evalTrig('Csc', ops[0]),
       },
     },
     Sec: {
@@ -240,9 +239,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: trigFunction('Sec'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Sec', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Sec', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Sec', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Sec', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Sec', ops[0]),
+        N: (ce, ops) => evalTrig('Sec', ops[0]),
       },
     },
     Sinh: {
@@ -251,9 +250,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Sinh'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Sinh', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Sinh', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Sinh', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Sinh', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Sinh', ops[0]),
+        N: (ce, ops) => evalTrig('Sinh', ops[0]),
       },
     },
     /** = sin(z/2)^2 = (1 - cos z) / 2*/
@@ -281,11 +280,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Csch'),
-        simplify: (ce, ops) =>
-          constructibleValues(ce, 'Csch', ops[0]) ??
-          ce.box(['Divide', 1, ['Sinh', ops[0]]]).simplify(),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Csch', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Csch', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Csch', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Csch', ops[0]),
+        N: (ce, ops) => evalTrig('Csch', ops[0]),
       },
     },
     Sech: {
@@ -293,9 +290,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: ['FunctionOf', 'Numbers', 'Numbers'],
-        simplify: (ce, ops) => constructibleValues(ce, 'Sech', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Sech', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Sech', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Sech', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Sech', ops[0]),
+        N: (ce, ops) => evalTrig('Sech', ops[0]),
       },
     },
     Tanh: {
@@ -304,9 +301,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Tanh'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Tanh', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Tanh', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Tanh', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Tanh', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Tanh', ops[0]),
+        N: (ce, ops) => evalTrig('Tanh', ops[0]),
       },
     },
   },
@@ -316,9 +313,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arccos'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Arccos', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arccos', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arccos', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Arccos', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arccos', ops[0]),
+        N: (ce, ops) => evalTrig('Arccos', ops[0]),
       },
     },
     Arccot: {
@@ -326,8 +323,8 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arccot'),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arccot', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arccot', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arccot', ops[0]),
+        N: (ce, ops) => evalTrig('Arccot', ops[0]),
       },
     },
 
@@ -336,8 +333,8 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arcoth'),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arcoth', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arcoth', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arcoth', ops[0]),
+        N: (ce, ops) => evalTrig('Arcoth', ops[0]),
       },
     },
 
@@ -346,8 +343,8 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arcsch'),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arcsch', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arcsch', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arcsch', ops[0]),
+        N: (ce, ops) => evalTrig('Arcsch', ops[0]),
       },
     },
 
@@ -356,8 +353,8 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arcsec'),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arcsec', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arcsec', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arcsec', ops[0]),
+        N: (ce, ops) => evalTrig('Arcsec', ops[0]),
       },
     },
 
@@ -366,8 +363,8 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arsech'),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arsech', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arsech', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arsech', ops[0]),
+        N: (ce, ops) => evalTrig('Arsech', ops[0]),
       },
     },
     Arccsc: {
@@ -375,8 +372,8 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: domainNumberToRealNumber('Arccsc'),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Arccsc', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Arccsc', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Arccsc', ops[0]),
+        N: (ce, ops) => evalTrig('Arccsc', ops[0]),
       },
     },
 
@@ -385,9 +382,9 @@ export const TRIGONOMETRY_LIBRARY: IdentifierDefinitions[] = [
       threadable: true,
       signature: {
         domain: hyperbolicFunction('Coth'),
-        simplify: (ce, ops) => constructibleValues(ce, 'Coth', ops[0]),
-        evaluate: (ce, ops) => evalTrig(ce, 'evaluate', 'Coth', ops[0]),
-        N: (ce, ops) => evalTrig(ce, 'N', 'Coth', ops[0]),
+        simplify: (ce, ops) => constructibleValues('Coth', ops[0]),
+        evaluate: (ce, ops) => constructibleValues('Coth', ops[0]),
+        N: (ce, ops) => evalTrig('Coth', ops[0]),
       },
     },
     /* converts (radius, angle) -> (x, y) */
@@ -418,9 +415,11 @@ const S5: Expression = ['Sqrt', 5];
 const S6: Expression = ['Sqrt', 6];
 // From https://en.wikipedia.org/wiki/Trigonometric_functions
 // and https://en.wikipedia.org/wiki/Exact_trigonometric_values
+
+// The key is the argument in radian, as (num * π / den)
 const CONSTRUCTIBLE_VALUES: [
   key: [numerator: number, denominator: number],
-  values: { [head: string]: Expression | LatexString },
+  values: { [name: string]: Expression | LatexString },
 ][] = [
   [
     [0, 1],
@@ -571,7 +570,7 @@ const CONSTRUCTIBLE_VALUES: [
 // For each trig function, by quadrant (0..π/2, π/2..π, π..3π/2, 3π/2..2π),
 // what is the corresponding identity (sign and function)
 // E.g 'Sin[θ+π/2] = Cos[θ]` -> Quadrant 2, Positive sign, Cos
-const TRIG_IDENTITIES: { [key: string]: [sign: number, head: string][] } = {
+const TRIG_IDENTITIES: { [key: string]: [sign: number, name: string][] } = {
   Sin: [
     [+1, 'Sin'],
     [+1, 'Cos'],
@@ -612,18 +611,15 @@ const TRIG_IDENTITIES: { [key: string]: [sign: number, head: string][] } = {
 
 type ConstructibleTrigValues = [
   [numerator: number, denominator: number],
-  { [head: string]: BoxedExpression },
+  { [operator: string]: BoxedExpression },
 ][];
 
 function constructibleValues(
-  ce: IComputeEngine,
-  head: string,
+  operator: string,
   x: BoxedExpression | undefined
 ): undefined | BoxedExpression {
   if (!x) return undefined;
-  x = angleToRadians(x)!;
-  let theta = asFloat(x.N());
-  if (theta === null) return undefined;
+  const ce = x.engine;
 
   //
   // Create the cache of special values
@@ -634,9 +630,9 @@ function constructibleValues(
       return CONSTRUCTIBLE_VALUES.map(([val, results]) => [
         val,
         Object.fromEntries(
-          Object.entries(results).map(([head, r]) => [
-            head,
-            ce.parse(asLatexString(r)) ?? ce.box(r),
+          Object.entries(results).map(([op, r]) => [
+            op,
+            (ce.parse(asLatexString(r)) ?? ce.box(r)).evaluate(),
           ])
         ),
       ]);
@@ -650,11 +646,21 @@ function constructibleValues(
     }
   );
 
-  if (isInverseTrigFunc(head))
-    return constructibleValuesInverse(ce, head, x, specialValues);
+  if (isInverseTrigFunc(operator))
+    return constructibleValuesInverse(ce, operator, x, specialValues);
+
+  let theta = asFloat(x.N());
+  if (theta === null) return undefined;
+
+  const angularUnit = ce.angularUnit;
+  if (angularUnit !== 'rad') {
+    if (angularUnit === 'deg') theta *= Math.PI / 180;
+    if (angularUnit === 'grad') theta *= Math.PI / 200;
+    if (angularUnit === 'turn') theta *= 2 * Math.PI;
+  }
 
   // Odd-even identities
-  const identitySign = trigFuncParity(head) == -1 ? Math.sign(theta) : +1;
+  const identitySign = trigFuncParity(operator) == -1 ? Math.sign(theta) : +1;
 
   theta = Math.abs(theta % (2 * Math.PI));
 
@@ -664,13 +670,13 @@ function constructibleValues(
 
   // Adjusting for the position in the quadrant
   let sign: number;
-  [sign, head] = TRIG_IDENTITIES[head]?.[quadrant] ?? [1, head];
+  [sign, operator] = TRIG_IDENTITIES[operator]?.[quadrant] ?? [1, operator];
 
   for (const [[n, d], value] of specialValues) {
-    const r = value[head];
-    if (r && ce.chop(theta - (Math.PI * n) / d) === 0) {
+    const r = value[operator];
+    if (r && Math.abs(theta - (Math.PI * n) / d) <= 1e-12) {
       if (r.symbol === 'ComplexInfinity') return r;
-      return identitySign * sign < 0 ? r.neg() : r.evaluate();
+      return identitySign * sign < 0 ? r.neg() : r;
     }
   }
   return undefined;
@@ -678,30 +684,30 @@ function constructibleValues(
 
 function constructibleValuesInverse(
   ce: IComputeEngine,
-  head: string,
+  operator: string,
   x: BoxedExpression | undefined,
   specialValues: ConstructibleTrigValues
 ): undefined | BoxedExpression {
   if (!x) return undefined;
   let x_N = asFloat(x.N());
   if (x_N === null) return undefined;
-  // head is arcFn, and inverse_head is Fn
-  const inverse_head = inverseTrigFuncName(head);
+  // operator is arcFn, and inv_operator is Fn
+  const inv_operator = inverseTrigFuncName(operator);
 
   //
-  // Create the cache of special values of the head function by inverting
-  // specialValues of inverse_head function
+  // Create the cache of special values of the operator function by inverting
+  // specialValues of inv_operator function
   //
   type ConstructibleTrigValuesInverse = [
     [match_arg: BoxedExpression, match_arg_N: number],
     angle: [numerator: number, denominator: number],
   ][];
   const specialInverseValues = ce.cache<ConstructibleTrigValuesInverse>(
-    'constructible-inverse-trigonometric-values-' + head,
+    'constructible-inverse-trigonometric-values-' + operator,
     () => {
       const cache: ConstructibleTrigValuesInverse = [];
       for (const [[n, d], value] of specialValues) {
-        const r = value[inverse_head!];
+        const r = value[inv_operator!];
         if (r === undefined) continue;
         const rn = asFloat(r.N());
         if (rn === null) continue;
@@ -725,7 +731,7 @@ function constructibleValuesInverse(
 
   let quadrant = 0;
   if (x_N < 0) {
-    quadrant = trigFuncParity(inverse_head!) == -1 ? -1 : 1;
+    quadrant = trigFuncParity(inv_operator!) == -1 ? -1 : 1;
     // shift x to quadrant 0 to match the key in specialInverseValues
     x_N = -x_N;
     x = x.neg();
@@ -734,29 +740,27 @@ function constructibleValuesInverse(
   for (const [[match_arg, match_arg_N], [n, d]] of specialInverseValues) {
     if (ce.chop(x_N - match_arg_N) === 0) {
       // there is an implicit Pi in the numerator
-      let theta = ce.box(['Divide', ['Multiply', n, 'Pi'], d]);
-      if (quadrant == -1) {
-        theta = theta.neg();
-      } else if (quadrant == 1) {
-        theta = ce.box(['Subtract', 'Pi', theta]);
-      }
+      let theta = ce.Pi.mul(n).div(d);
+      if (quadrant == -1) theta = theta.neg();
+      else if (quadrant == 1) theta = ce.Pi.sub(theta);
+
       return theta.evaluate();
     }
   }
   return undefined;
 }
 
-function trigFuncParity(head: string): number {
+function trigFuncParity(name: string): number {
   // Cos and Sec are even functions, the others are odd
-  return head !== 'Cos' && head !== 'Sec' ? -1 : 1;
+  return name !== 'Cos' && name !== 'Sec' ? -1 : 1;
 }
 
-function isInverseTrigFunc(head: string): boolean {
-  if (head.startsWith('Ar') && inverseTrigFuncName(head)) return true;
+function isInverseTrigFunc(name: string): boolean {
+  if (name.startsWith('Ar') && inverseTrigFuncName(name)) return true;
   return false;
 }
 
-function inverseTrigFuncName(head: string): string | undefined {
+function inverseTrigFuncName(name: string): string | undefined {
   return {
     Sin: 'Arcsin',
     Cos: 'Arccos',
@@ -779,7 +783,7 @@ function inverseTrigFuncName(head: string): string | undefined {
     Arsinh: 'Sinh',
     Arctan: 'Tan',
     Artanh: 'Tanh',
-  }[head];
+  }[name];
 }
 
 function processInverseFunction(
@@ -788,25 +792,21 @@ function processInverseFunction(
 ): BoxedExpression | undefined {
   if (xs.length !== 1 || !xs[0].isValid) return undefined;
   const expr = xs[0];
-  const head = expr.symbol;
-  if (typeof head !== 'string') return undefined;
-  if (head === 'InverseFunction') return expr.op1;
-  const newHead = inverseTrigFuncName(head);
+  const name = expr.symbol;
+  if (typeof name !== 'string') return undefined;
+  if (name === 'InverseFunction') return expr.op1;
+  const newHead = inverseTrigFuncName(name);
   return newHead ? ce.symbol(newHead) : undefined;
 }
 
 function evalTrig(
-  ce: IComputeEngine,
-  mode: 'N' | 'evaluate',
-  head: string,
+  name: string,
   op: BoxedExpression | undefined
 ): BoxedExpression | undefined {
   if (!op) return undefined;
-  let result = constructibleValues(ce, head, op);
-  if (mode === 'N' && result) result = result.N();
-  if (result) return result;
-  if (mode === 'evaluate' && op.isExact) return undefined;
-  switch (head) {
+  const ce = op.engine;
+
+  switch (name) {
     case 'Arccos':
       return radiansToAngle(
         applyN(
@@ -1039,7 +1039,9 @@ function applyAngle(
   bigFn?: (x: Decimal) => Decimal | Complex | number,
   complexFn?: (x: Complex) => number | Complex
 ): BoxedExpression | undefined {
-  return applyN(angleToRadians(angle)!, fn, bigFn, complexFn);
+  const theta = angleToRadians(angle)?.N();
+  if (theta === undefined) return undefined;
+  return applyN(theta, fn, bigFn, complexFn);
 }
 
 function angleToRadians(
@@ -1050,11 +1052,9 @@ function angleToRadians(
   const angularUnit = ce.angularUnit;
   if (angularUnit === 'rad') return x;
 
-  const theta = asFloat(x.N());
-  if (theta === null) return x;
-  if (angularUnit === 'deg') return ce.number(theta * (Math.PI / 180));
-  if (angularUnit === 'grad') return ce.number(theta * (Math.PI / 200));
-  if (angularUnit === 'turn') return ce.number(theta * (2 * Math.PI));
+  if (angularUnit === 'deg') x = x.mul(ce.Pi).div(180);
+  if (angularUnit === 'grad') x = x.mul(ce.Pi).div(200);
+  if (angularUnit === 'turn') x = x.mul(ce.Pi).mul(2);
   return x;
 }
 
@@ -1073,4 +1073,37 @@ function radiansToAngle(
   if (angularUnit === 'grad') return ce.number(theta * (200 / Math.PI));
   if (angularUnit === 'turn') return ce.number(theta / (2 * Math.PI));
   return x;
+}
+
+const TRIG_FUNCTIONS: { [key: string]: boolean } = {
+  Sin: true,
+  Cos: true,
+  Tan: true,
+  Cot: true,
+  Sec: true,
+  Csc: true,
+  Sinh: true,
+  Cosh: true,
+  Tanh: true,
+  Coth: true,
+  Sech: true,
+  Csch: true,
+  Arcsin: true,
+  Arccos: true,
+  Arctan: true,
+  Arccot: true,
+  Arcsec: true,
+  Arccsc: true,
+  Arsinh: true,
+  Arcosh: true,
+  Artanh: true,
+  Arcoth: true,
+  Arcsch: true,
+  Arsech: true,
+  Arcsech: true,
+};
+
+export function isTrigonometricFunction(operator: any): boolean {
+  if (!operator || typeof operator !== 'string') return false;
+  return operator in TRIG_FUNCTIONS;
 }

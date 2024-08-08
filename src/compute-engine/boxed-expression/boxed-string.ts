@@ -1,4 +1,3 @@
-import { Expression } from '../../math-json/math-json-format';
 import { _BoxedExpression } from './abstract-boxed-expression';
 import {
   BoxedExpression,
@@ -36,7 +35,7 @@ export class BoxedString extends _BoxedExpression {
   get hash(): number {
     return hashCode('String' + this._string);
   }
-  get head(): string {
+  get operator(): string {
     return 'String';
   }
   get isPure(): boolean {

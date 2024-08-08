@@ -1,5 +1,8 @@
-import { factorPower, gcd } from './numeric';
-import { gcd as bigGcd, factorPower as bigFactorPower } from './numeric-bigint';
+import { canonicalInteger, gcd } from './numeric';
+import {
+  gcd as bigGcd,
+  canonicalInteger as bigCanonicalInteger,
+} from './numeric-bigint';
 
 /**
  * @category Boxed Expression
@@ -21,6 +24,10 @@ export function isBigRational(x: any | null): x is [bigint, bigint] {
 export function isZero(x: Rational): boolean {
   // Note '==' to convert bigint to number
   return x[0] == 0;
+}
+
+export function isPositive(x: Rational): boolean {
+  return x[0] > 0;
 }
 
 export function isOne(x: Rational): boolean {
@@ -66,7 +73,7 @@ export function inverse(x: Rational): Rational {
   return (x[0] < 0 ? [-x[1], -x[0]] : [x[1], x[0]]) as Rational;
 }
 
-function asMachineRational(r: Rational): [number, number] {
+export function asMachineRational(r: Rational): [number, number] {
   return [Number(r[0]), Number(r[1])];
 }
 
@@ -176,12 +183,12 @@ export function reduceRationalSquareRoot(
 ): [factor: Rational, root: number | bigint] {
   if (isBigRational(n)) {
     const [num, den] = n;
-    const [nFactor, nRoot] = bigFactorPower(num, 2);
-    const [dFactor, dRoot] = bigFactorPower(den, 2);
+    const [nFactor, nRoot] = bigCanonicalInteger(num, 2);
+    const [dFactor, dRoot] = bigCanonicalInteger(den, 2);
     return [reducedRational([nFactor, dFactor * dRoot]), nRoot * dRoot];
   }
   const [num, den] = n;
-  const [nFactor, nRoot] = factorPower(num, 2);
-  const [dFactor, dRoot] = factorPower(den, 2);
+  const [nFactor, nRoot] = canonicalInteger(num, 2);
+  const [dFactor, dRoot] = canonicalInteger(den, 2);
   return [reducedRational([nFactor, dFactor * dRoot]), nRoot * dRoot];
 }

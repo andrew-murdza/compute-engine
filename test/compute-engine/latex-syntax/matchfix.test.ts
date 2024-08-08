@@ -107,30 +107,29 @@ describe('MATCHFIX abs and norm', () => {
     expect(check('1+|a|+2')).toMatchInlineSnapshot(`
       box       = ["Add", 1, ["Abs", "a"], 2]
       canonical = ["Add", ["Abs", "a"], 1, 2]
-      simplify  = ["Add", ["Abs", "a"], 3]
+      simplify  = |a| + 3
     `));
 
   test('|(1+|a|+2)|', () =>
     expect(check('|(1+|a|+2)|')).toMatchInlineSnapshot(`
       box       = ["Abs", ["Delimiter", ["Add", 1, ["Abs", "a"], 2]]]
       canonical = ["Abs", ["Add", ["Abs", "a"], 1, 2]]
-      simplify  = ["Abs", ["Add", ["Abs", "a"], 3]]
+      simplify  = ||a| + 3|
     `));
 
   test('|1+|a|+2|', () =>
     expect(check('|1+|a|+2|')).toMatchInlineSnapshot(`
       box       = ["Abs", ["Add", 1, ["Abs", "a"], 2]]
       canonical = ["Abs", ["Add", ["Abs", "a"], 1, 2]]
-      simplify  = ["Abs", ["Add", ["Abs", "a"], 3]]
+      simplify  = ||a| + 3|
     `));
 
   test('||a||', () =>
     expect(check('||a||')).toMatchInlineSnapshot(`["Norm", "a"]`));
   test('||a||+|b|', () =>
-    expect(check('||a||+|b|')).toMatchInlineSnapshot(`
-      box       = ["Add", ["Norm", "a"], ["Abs", "b"]]
-      canonical = ["Add", ["Abs", "b"], ["Norm", "a"]]
-    `));
+    expect(check('||a||+|b|')).toMatchInlineSnapshot(
+      `["Add", ["Norm", "a"], ["Abs", "b"]]`
+    ));
 });
 
 describe('MATCHFIX invalid', () => {

@@ -43,7 +43,7 @@ export const SETS_LIBRARY: IdentifierDefinitions = {
     hold: 'all',
     signature: {
       domain: 'Predicates',
-      canonical: (ce, args) => ce.box(['Not', ['Element', ...args]]),
+      canonical: (ce, args) => ce._fn('Not', [ce.function('Element', args)]),
     },
   },
   Subset: {
@@ -54,7 +54,7 @@ export const SETS_LIBRARY: IdentifierDefinitions = {
     complexity: 11200,
     signature: {
       domain: 'Predicates',
-      canonical: (ce, args) => ce.box(['Not', ['Subset', ...args]]),
+      canonical: (ce, args) => ce._fn('Not', [ce.function('Subset', args)]),
     },
   },
   Superset: {
@@ -69,14 +69,15 @@ export const SETS_LIBRARY: IdentifierDefinitions = {
     complexity: 11200,
     signature: {
       domain: 'Predicates',
-      canonical: (ce, args) => ce.box(['Not', ['Superset', ...args]]),
+      canonical: (ce, args) => ce._fn('Not', [ce.function('Superset', args)]),
     },
   },
   NotSupersetEqual: {
     complexity: 11200,
     signature: {
       domain: 'Predicates',
-      canonical: (ce, args) => ce.box(['Not', ['SupersetEqual', ...args]]),
+      canonical: (ce, args) =>
+        ce._fn('Not', [ce.function('SupersetEqual', args)]),
     },
   },
   SubsetEqual: {
@@ -88,7 +89,8 @@ export const SETS_LIBRARY: IdentifierDefinitions = {
     complexity: 11200,
     signature: {
       domain: 'Predicates',
-      canonical: (ce, args) => ce.box(['Not', ['SubsetEqual', ...args]]),
+      canonical: (ce, args) =>
+        ce._fn('Not', [ce.function('SubsetEqual', args)]),
     },
   },
 
@@ -256,8 +258,8 @@ function evaluateElement(
   }
 
   // Is the element `lhs` or the sublist `lhs` inside `rhs`?
-  if (rhs.head === 'List') {
-    if (lhs.head === 'List') {
+  if (rhs.operator === 'List') {
+    if (lhs.operator === 'List') {
       let found = false;
       for (let i = 0; i < 1 + (rhs.nops - lhs.nops); ++i) {
         found = true;
@@ -273,7 +275,7 @@ function evaluateElement(
       return ce.False;
     }
     // Is the `lhs` element inside the list?
-    const val = lhs.head === 'Hold' ? lhs.op1 : lhs;
+    const val = lhs.operator === 'Hold' ? lhs.op1 : lhs;
     for (const elem of rhs.ops!) if (val.isEqual(elem)) return ce.True;
 
     return ce.False;

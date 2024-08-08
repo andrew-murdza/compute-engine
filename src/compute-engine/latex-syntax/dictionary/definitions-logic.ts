@@ -7,10 +7,10 @@ import {
 } from '../public';
 import {
   getSequence,
-  head,
+  operator,
   missingIfEmpty,
-  op,
-  ops,
+  operand,
+  operands,
   symbol,
 } from '../../../math-json/utils';
 import { Expression } from '../../../math-json';
@@ -186,8 +186,8 @@ export const DEFINITIONS_LOGIC: LatexDictionary = [
       const index = parser.index;
 
       const modulus = parser.parseExpression({ ...terminator, minPrec: 219 });
-      if (modulus && head(modulus) === 'Mod')
-        return ['Congruent', lhs, rhs, missingIfEmpty(op(modulus, 1))];
+      if (modulus && operator(modulus) === 'Mod')
+        return ['Congruent', lhs, rhs, missingIfEmpty(operand(modulus, 1))];
 
       parser.index = index;
       return ['Equivalent', lhs, missingIfEmpty(rhs)] as Expression;
@@ -250,8 +250,8 @@ export const DEFINITIONS_LOGIC: LatexDictionary = [
     latexTrigger: ['\\delta', '_'],
     precedence: 200,
     serialize: (serializer: Serializer, expr: Expression) => {
-      const args = ops(expr);
-      if (!args) return '\\delta';
+      const args = operands(expr);
+      if (args.length === 0) return '\\delta';
 
       // If only symbol arguments, just concatenate them
       // ['KroneckerDelta', 'n', 'm'] -> \delta_{nm}
@@ -263,7 +263,7 @@ export const DEFINITIONS_LOGIC: LatexDictionary = [
     },
     parse: (parser) => {
       const group = parser.parseGroup();
-      if (!group) {
+      if (group === null) {
         const token = parser.parseToken();
         if (!token) return null;
         // \\delta_n
@@ -276,11 +276,11 @@ export const DEFINITIONS_LOGIC: LatexDictionary = [
       if (seq && seq.length <= 2) return ['KroneckerDelta', ...seq];
 
       // \\delta_{nm}
-      if (head(group) === 'InvisibleOperator')
-        return ['KroneckerDelta', ...ops(group)!];
+      if (operator(group) === 'InvisibleOperator')
+        return ['KroneckerDelta', ...operands(group)];
 
       // \\delta_{n}
-      if (group) return ['KroneckerDelta', group];
+      if (group !== null) return ['KroneckerDelta', group];
 
       return null;
     },
@@ -301,8 +301,8 @@ export const DEFINITIONS_LOGIC: LatexDictionary = [
     //   return `[${serializer.serialize(arg)}]`;
     // },
     parse: (_parser, body) => {
-      const h = head(body);
-      if (typeof h !== 'string') return null;
+      const h = operator(body);
+      if (!h) return null;
       if (!DEFINITIONS_INEQUALITIES.some((x) => x.name === h)) return null;
       return ['Boole', body];
     },
@@ -313,8 +313,8 @@ export const DEFINITIONS_LOGIC: LatexDictionary = [
     openTrigger: '\\llbracket',
     closeTrigger: '\\rrbracket',
     parse: (_parser, body) => {
-      const h = head(body);
-      if (typeof h !== 'string') return null;
+      const h = operator(body);
+      if (!h) return null;
       if (!DEFINITIONS_INEQUALITIES.some((x) => x.name === h)) return null;
       return ['Boole', body];
     },

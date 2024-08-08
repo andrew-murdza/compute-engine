@@ -1,4 +1,3 @@
-import Complex from 'complex.js';
 import { Decimal } from 'decimal.js';
 import { isPrime } from '../numerics/primes';
 import {
@@ -15,7 +14,7 @@ import {
   LatexString,
 } from './public';
 import { _BoxedExpression } from './abstract-boxed-expression';
-import { bignumPreferred, complexAllowed, isLatexString } from './utils';
+import { bignumPreferred, isLatexString } from './utils';
 import { widen } from './boxed-domain';
 import { asFloat } from './numerics';
 
@@ -178,8 +177,6 @@ export class _BoxedSymbolDefinition implements BoxedSymbolDefinition {
         const val = this._value.numericValue;
         if (!bignumPreferred(ce) && val instanceof Decimal)
           this._value = ce.number(val.toNumber());
-        else if (!complexAllowed(ce) && val instanceof Complex)
-          this._value = ce.NaN;
       }
     }
     return this._value ?? undefined;

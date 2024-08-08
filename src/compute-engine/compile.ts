@@ -1,4 +1,4 @@
-import { MathJsonIdentifier } from '../math-json/math-json-format';
+import { MathJsonIdentifier } from '../math-json/types';
 import { asFloat } from './boxed-expression/numerics';
 import { isRelationalOperator } from './boxed-expression/utils';
 import { isCollection, isFiniteIndexableCollection } from './collection-utils';
@@ -425,7 +425,7 @@ function compileExpr(
     // Get all the Declare statements
     const locals: string[] = [];
     for (const arg of args) {
-      if (arg.head === 'Declare') locals.push(arg.ops![0].symbol!);
+      if (arg.operator === 'Declare') locals.push(arg.ops![0].symbol!);
     }
 
     if (args.length === 1 && locals.length === 0)
@@ -498,22 +498,8 @@ export function compile(
   const str = expr.string;
   if (str !== null) return target.string(s!);
 
-  // Is it a dictionary?
-  const keys = expr.keys;
-  if (keys !== null) {
-    const result: string[] = [];
-    for (const key of keys) {
-      const value = expr.getKey(key);
-      if (value) result.push(`${key}: ${compile(value, target, 0)}`);
-    }
-    return `{${result.join(', ')}}`;
-  }
-
-  // Is it a function expression?
-  const h = expr.head;
-  if (typeof h === 'string') return compileExpr(h, expr.ops!, prec, target);
-
-  return '';
+  // It must be a function expression...
+  return compileExpr(expr.operator, expr.ops!, prec, target);
 }
 
 function compileLoop(
@@ -525,7 +511,7 @@ function compileLoop(
   if (!args[0]) throw new Error('Sum/Product: no body');
   // if (!args[1]) throw new Error('Sum/Product: no limits');
 
-  const [index, lower, upper, isFinite] = normalizeIndexingSet(args[1]);
+  const [index, lower, upper, _isFinite] = normalizeIndexingSet(args[1]);
 
   const op = h === 'Sum' ? '+' : '*';
 

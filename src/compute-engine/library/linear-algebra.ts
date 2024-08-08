@@ -31,10 +31,10 @@ export const LINEAR_ALGEBRA_LIBRARY: IdentifierDefinitions[] = [
         result: 'Lists',
         canonical: (ce, ops) => {
           return ce._fn('Matrix', [
-            ce.box([
+            ce.function(
               'List',
-              ...ops.map((op) => ce.box(['List', op.canonical])),
-            ]),
+              ops.map((op) => ce.function('List', [op]))
+            ),
           ]);
         },
       },
@@ -50,9 +50,9 @@ export const LINEAR_ALGEBRA_LIBRARY: IdentifierDefinitions[] = [
         evaluate: (ce, ops) => {
           const op1 = ops[0];
 
-          if (isBoxedTensor(op1)) return ce.tuple(op1.tensor.shape);
+          if (isBoxedTensor(op1)) return ce.tuple(...op1.tensor.shape);
 
-          return ce.tuple([]);
+          return ce.tuple();
         },
       },
     },
@@ -84,7 +84,7 @@ export const LINEAR_ALGEBRA_LIBRARY: IdentifierDefinitions[] = [
           // If a finite indexable collection, convert to a list
           // -> BoxedTensor
           if (!isBoxedTensor(op1) && isFiniteIndexableCollection(op1))
-            op1 = ce.box(['List', ...each(op1)]);
+            op1 = ce.function('List', [...each(op1)]);
 
           if (isBoxedTensor(op1))
             return op1.tensor.reshape(...shape).expression;
@@ -110,7 +110,7 @@ export const LINEAR_ALGEBRA_LIBRARY: IdentifierDefinitions[] = [
             ]);
 
           if (isFiniteIndexableCollection(op1))
-            return ce.box(['List', ...each(op1)]);
+            return ce.function('List', [...each(op1)]);
 
           return undefined;
         },
@@ -139,7 +139,7 @@ export const LINEAR_ALGEBRA_LIBRARY: IdentifierDefinitions[] = [
           }
           if (axis1 === axis2) return undefined;
           if (!isBoxedTensor(op1) && isFiniteIndexableCollection(op1))
-            op1 = ce.box(['List', ...each(op1)]);
+            op1 = ce.function('List', [...each(op1)]);
           if (isBoxedTensor(op1)) {
             if (axis1 === 1 && axis2 === 2)
               return op1.tensor.transpose()?.expression;
@@ -270,18 +270,18 @@ export const LINEAR_ALGEBRA_LIBRARY: IdentifierDefinitions[] = [
 function canonicalMatrix(
   ce: IComputeEngine,
   ops: BoxedExpression[],
-  head = 'Matrix'
+  operator = 'Matrix'
 ): BoxedExpression | null {
-  if (ops.length === 0) return ce._fn(head, []);
+  if (ops.length === 0) return ce._fn(operator, []);
 
   const body =
-    ops[0].head === 'Vector' ? ops[0].canonical.ops![0] : ops[0].canonical;
+    ops[0].operator === 'Vector' ? ops[0].canonical.ops![0] : ops[0].canonical;
   const delims = ops[1]?.canonical;
   const columns = ops[2]?.canonical;
 
-  if (ops.length > 3) return ce._fn(head, checkArity(ce, ops, 3));
+  if (ops.length > 3) return ce._fn(operator, checkArity(ce, ops, 3));
 
-  if (columns) return ce._fn(head, [body, delims, columns]);
-  if (delims) return ce._fn(head, [body, delims]);
-  return ce._fn(head, [body]);
+  if (columns) return ce._fn(operator, [body, delims, columns]);
+  if (delims) return ce._fn(operator, [body, delims]);
+  return ce._fn(operator, [body]);
 }

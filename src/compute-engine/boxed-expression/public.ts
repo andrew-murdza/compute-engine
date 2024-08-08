@@ -6,7 +6,6 @@ import {
   MathJsonString,
   MathJsonSymbol,
   MathJsonFunction,
-  MathJsonDictionary,
   MathJsonIdentifier,
 } from '../../math-json';
 import type {
@@ -16,9 +15,94 @@ import type {
 } from '../latex-syntax/public';
 import { IndexedLatexDictionary } from '../latex-syntax/dictionary/definitions';
 import { Rational } from '../numerics/rationals';
-import { NumericValue } from '../numeric-value/public';
+import { NumericValue, NumericValueData } from '../numeric-value/public';
 
-import './serialize';
+/**
+ * :::info[THEORY OF OPERATIONS]
+ *
+ * To create a boxed expression:
+ *
+ * ### `ce.box()` and `ce.parse()`
+ * 
+ * Use `ce.box()` or `ce.parse()` to get a canonical expression.
+ *    - the arguments are put in canonical form
+ *    - invisible operators are made explicit
+ *    - a limited number of core simplifications are applied,
+ *      for example 0 is removed from additions
+ *    - sequences are flattened: `["Add", 1, ["Sequence", 2, 3]]` is
+ *      transformed to `["Add", 1, 2, 3]`
+ *    - associative functions are flattened: `["Add", 1, ["Add", 2, 3]]` is
+ *      transformed to `["Add", 1, 2, 3]`
+ *    - commutative functions are sorted
+ *    - identifiers are not replaced with their values
+ *
+ * ### Algebraic methods (expr.add(), expr.mul(), etc...)
+ * The boxed expression have some algebraic methods, i.e. `add`, `mul`, `div`, `pow`, etc. These methods are suitable for internal calculations, although they may be used as part of the public API as well.
+ 
+ *     - the operation is performed on the canonical version of the expression
+ *    - the arguments are not evaluated
+ *    - the canonical handler (of the corresponding operation) is not called
+ *    - sequences are flattened as part of the canonicalization process
+ *    - some additional simplifications over canonicalization are applied, for
+ *      example number literals are combined. However, the result is exact, 
+ *      and no approximation is made. Use `.N()` to get an approximate value.
+ *
+ * For 'add' and 'mul', which take multiple arguments, separate functions
+ *   are provided that take an array of arguments. They are equivalent
+ *   to calling the boxed algebraic method, i.e. `ce.Zero.add(1, 2, 3)` or
+ *   `add(1, 2, 3)` are equivalent.
+ *
+ * ### `ce._fn()`
+ * 
+ * Use `ce._fn()` to create a new function expression.
+ *
+ * This is a low level method which is typically invoked in the canonical
+ * handler of a function definition.
+ *
+ * The arguments are not modified. The expression is not put in canonical
+ * form. The canonical handler is *not* called.
+ * 
+ * A canonical flag can be set when calling the function, but it only 
+ * asserts that the function and its arguments are canonical. The caller
+ * is responsible for ensuring that is the case.
+ *
+ * 
+ * ### `ce.function()`
+ * 
+ * This is a specialized version of `ce.box()`. It is used to create a new
+ * function expression.
+ * 
+ * The arguments are put in canonical form and the canonical handler is called.
+ *
+ * For algebraic functions (add, mul, etc..), use the corresponding 
+ * canonicalization function, i.e. `canonicalAdd(a, b)` instead of
+ * `ce.function('Add', a, b)`.
+ * 
+ * Another option is to use the algebraic methods directly, i.e. `a.add(b)`
+ * instead of `ce.function('Add', a, b)`. However, the algebraic methods will
+ * apply further simplifications which may or may not be desirable. For
+ * example, exact literals will be combined.
+ *
+ * ### Canonical Handlers
+ * 
+ * Canonical handlers are responsible for:
+ *    - validating the signature (domain and number of arguments)
+ *    - flattening sequences
+ *    - flattening associative functions
+ *    - sort the arguments (if the function is commutative)
+ *    - calling `ce._fn()` to create a new function expression
+ *    - if the function definition has a hold, they should also put
+ *      their arguments in canonical form, if appropriate
+ *
+ * When the canonical handler is invoked, the arguments have been put in 
+ * canonical form according to the `hold` flag.
+ * 
+ * Some canonical handlers are available as separate functions and can be
+ * used directly, for example `canonicalAdd(a, b)` instead of 
+ * `ce.function('Add', [a, b])`.
+ * 
+ * :::
+ */
 
 /**
  * :::info[THEORY OF OPERATIONS]
@@ -110,6 +194,8 @@ export interface BoxedExpression {
    */
   toLatex(options?: Partial<SerializeLatexOptions>): LatexString;
 
+  verbatimLatex?: string;
+
   /** If `true`, this expression is in a canonical form. */
   get isCanonical(): boolean;
 
@@ -200,14 +286,14 @@ export interface BoxedExpression {
    */
   readonly string: string | null;
 
-  /** All the subexpressions matching the head
+  /** All the subexpressions matching the named operator
    *
    * :::info[Note]
    * Applicable to canonical and non-canonical expressions.
    * :::
    *
    */
-  getSubexpressions(head: string): ReadonlyArray<BoxedExpression>;
+  getSubexpressions(name: string): ReadonlyArray<BoxedExpression>;
 
   /** All the subexpressions in this expression, recursively
    *
@@ -252,21 +338,19 @@ export interface BoxedExpression {
    */
   readonly errors: ReadonlyArray<BoxedExpression>;
 
-  /** All boxed expressions have a head.
+  /**
+   * The name of the operator of the expression.
    *
-   * If not a function this can be `Symbol`, `String`, `Number` or `Dictionary`.
+   * For example, the name of the operator of `["Add", 2, 3]` is `"Add"`.
    *
-   * If the head expression can be represented as a string, it is returned
-   * as a string.
+   * A string literal has a `"String"` operator.
    *
-   * :::info[Note]
-   * Applicable to canonical and non-canonical expressions. The head
-   * of a non-canonical expression may be different than the head of its
-   * canonical counterpart. For example the canonical counterpart of `["Divide", 5, 7]` is `["Rational", 5, 7]`.
-   * :::
-
-  */
-  readonly head: BoxedExpression | string;
+   * A symbol has a `"Symbol"` operator.
+   *
+   * A number has a `"Number"`, `"Real"`, `"Rational"` or `"Integer"` operator.
+   *
+   */
+  readonly operator: string;
 
   /** The list of arguments of the function, its "tail".
    *
@@ -345,22 +429,6 @@ export interface BoxedExpression {
    *
    */
   readonly isValid: boolean;
-
-  /**
-   * An exact value is not further transformed when evaluated. To get an
-   * approximate evaluation of an exact value, use `.N()`.
-   *
-   * Exact numbers are:
-   * - rationals (including integers)
-   * - complex numbers with integer real and imaginary parts (Gaussian integers)
-   * - square root of rationals
-   *
-   * Non-exact values includes:
-   * - numbers with a fractional part
-   * - complex numbers with a real or imaginary fractional part
-   *
-   */
-  readonly isExact: boolean;
 
   /** If true, the value of the expression never changes and evaluating it has
    * no side-effects.
@@ -453,7 +521,7 @@ export interface BoxedExpression {
   ): null | BoxedExpression;
 
   /**
-   * True if the expression includes a symbol `v` or a function head `v`.
+   * True if the expression includes a symbol `v` or a function operator `v`.
    *
    * :::info[Note]
    * Applicable to canonical and non-canonical expressions.
@@ -579,12 +647,29 @@ export interface BoxedExpression {
    *
    * Conversely, `isNumber` may be true even if `numericValue` is `null`,
    * example the symbol `Pi` return true for `isNumber` but `numericValue` is
-   * `null`. Its value can be accessed with `.value.numericValue`
+   * `null`. Its value can be accessed with `.N().numericValue`
    *
    * @category Numeric Expression
    *
    */
   readonly numericValue: number | Decimal | Complex | Rational | null;
+
+  /**
+   * Attempt to factor a numeric coefficient `c` and a `rest` out of a
+   * canonical expression such that `rest.mul(c)` is equal to `this`.
+   *
+   * Attempts to make `rest` a positive value (i.e. pulls out negative sign).
+   *
+   * For example:
+   *
+   * ['Multiply', 2, 'x', 3, 'a']
+   *    -> [NumericValue(6), ['Multiply', 'x', 'a']]
+   *
+   * ['Divide', ['Multiply', 2, 'x'], ['Multiply', 3, 'y', 'a']]
+   *    -> [NumericValue({rational: [2, 3]}), ['Divide', 'x', ['Multiply, 'y', 'a']]]
+   */
+
+  toNumericValue(): [NumericValue, BoxedExpression];
 
   //
   // Algebraic operations
@@ -592,14 +677,15 @@ export interface BoxedExpression {
   neg(): BoxedExpression;
   inv(): BoxedExpression;
   abs(): BoxedExpression;
-  add(...rhs: (number | BoxedExpression)[]): BoxedExpression;
+  add(rhs: number | BoxedExpression): BoxedExpression;
   sub(rhs: BoxedExpression): BoxedExpression;
-  mul(...rhs: (number | BoxedExpression)[]): BoxedExpression;
-  div(rhs: BoxedExpression): BoxedExpression;
-  pow(exp: number | BoxedExpression): BoxedExpression;
+  mul(rhs: NumericValue | number | BoxedExpression): BoxedExpression;
+  div(rhs: number | BoxedExpression): BoxedExpression;
+  pow(
+    exp: number | [num: number, denom: number] | BoxedExpression
+  ): BoxedExpression;
   sqrt(): BoxedExpression;
-  // root(exp: number | BoxedExpression): BoxedExpression;
-  // log(base?: SemiBoxedExpression): BoxedExpression;
+  ln(base?: SemiBoxedExpression): BoxedExpression;
   // exp(): BoxedExpression;
 
   /** The shape describes the axis of the expression.
@@ -686,38 +772,6 @@ export interface BoxedExpression {
    */
   readonly isNonPositive: boolean | undefined;
 
-  /** The keys of the dictionary.
-   *
-   * If this expression not a dictionary, return `null`
-   *
-   * @category Dictionary Expression
-   *
-   */
-  readonly keys: IterableIterator<string> | null;
-
-  /**
-   *
-   * @category Dictionary Expression
-   */
-  readonly keysCount: number;
-
-  /**
-   * If this expression is a dictionary, return the value of the `key` entry.
-   *
-   * @category Dictionary Expression
-   *
-   */
-  getKey(key: string): BoxedExpression | undefined;
-
-  /**
-   * If this expression is a dictionary, return true if the
-   *  dictionary has a `key` entry.
-   *
-   * @category Dictionary Expression
-   *
-   */
-  hasKey(key: string): boolean;
-
   //
   // CANONICAL EXPRESSIONS ONLY
   //
@@ -745,7 +799,7 @@ export interface BoxedExpression {
   readonly description: undefined | string[];
 
   /** An optional URL pointing to more information about the symbol or
-   *  function head.
+   *  function operator.
    *
    * :::info[Note]
    * `undefined` if not a canonical expression.
@@ -887,8 +941,8 @@ export interface BoxedExpression {
    * Any necessary calculations, including on decimal numbers (non-integers),
    * are performed.
    *
-   * The calculations are performed according to the `numericMode` and
-   * `precision` properties of the `ComputeEngine`.
+   * The calculations are performed according to the
+   * `precision` property of the `ComputeEngine`.
    *
    * To only perform exact calculations, use `this.evaluate()` instead.
    *
@@ -954,7 +1008,7 @@ export interface BoxedExpression {
    *
    * If a symbol the domain of the value of the symbol.
    *
-   * Use `expr.head` to determine if an expression is a symbol or function
+   * Use `expr.operator` to determine if an expression is a symbol or function
    * expression.
    *
    * :::info[Note]
@@ -1090,8 +1144,7 @@ export type SemiBoxedExpression =
   | MathJsonString
   | MathJsonSymbol
   | MathJsonFunction
-  | MathJsonDictionary
-  | SemiBoxedExpression[]
+  | readonly [MathJsonIdentifier, ...SemiBoxedExpression[]]
   | BoxedExpression;
 
 /**
@@ -1130,7 +1183,7 @@ export type DomainCompatibility =
   | 'bivariant' // A <: B and A :>B, A := B
   | 'invariant'; // Neither A <: B, nor A :> B
 
-/** A domain constructor is the head of a domain expression.
+/** A domain constructor is the operator of a domain expression.
  *
  * @category Boxed Expression
  *
@@ -1174,38 +1227,6 @@ export interface BoxedDomain extends BoxedExpression {
 
   readonly isNumeric: boolean;
   readonly isFunction: boolean;
-  // readonly isNothing: boolean;
-  // readonly isBoolean: boolean;
-  // readonly isPredicate: boolean;
-  /**
-   * If true, when all the arguments are numeric, the result of the
-   * evaluation is numeric. Numeric is any value with a domain of `Number`.
-   *
-   * Example of numeric functions: `Add`, `Multiply`, `Power`, `Abs`
-   *
-   * Default: `false`
-   */
-  // readonly isNumericFunction: boolean;
-  // readonly isRealFunction: boolean;
-  /**
-   * If true, when all the arguments are boolean, the result of the
-   * evaluation is a boolean. Boolean is any value with a domain of `MaybeBoolean`.
-   *
-   * Example of logic functions: `And`, `Or`, `Not`, `Implies`
-   *
-   * **Default:** `false`
-   */
-  // readonly isLogicOperator: boolean;
-  /**
-   * The function represent a relation between the first argument and
-   * the second argument, and evaluates to a boolean indicating if the relation
-   * is satisfied.
-   *
-   * For example, `Equal`, `Less`, `Approx`, etc...
-   *
-   * **Default:** `false`
-   */
-  // readonly isRelationalOperator: boolean;
 }
 
 /**
@@ -1735,9 +1756,8 @@ export type DomainExpression<T = SemiBoxedExpression> =
  * @category Compute Engine
  */
 export type SimplifyOptions = {
-  depth: number; // Depth in the expression tree
-  maxDepth: number; // Do not simplify beyong this depth
-  rules: null | BoxedRuleSet;
+  recursive?: boolean; // Default to true
+  rules: null | Rule | Rule[] | BoxedRuleSet;
 };
 
 /** Options for `BoxedExpression.evaluate()`
@@ -1747,24 +1767,6 @@ export type SimplifyOptions = {
 export type EvaluateOptions = {
   numericMode?: boolean; // Default to false
 };
-
-/**
- * The numeric evaluation mode:
- * 
-<div className="symbols-table">
-
-| Mode | |
-| :--- | :----- |
-| `"auto"`| Use bignum or complex numbers. |
-| `"machine"` |  **IEEE 754-2008**, 64-bit floating point numbers: 52-bit mantissa, about 15 digits of precision |
-| `"bignum"` | Arbitrary precision floating point numbers, as provided by the "decimal.js" library | 
-| `"complex"` | Complex number represented by two machine numbers, a real and an imaginary part, as provided by the "complex.js" library |
-
-</div>
-
- * @category Compute Engine
- */
-export type NumericMode = 'auto' | 'machine' | 'bignum' | 'complex';
 
 /**
  * Metadata that can be associated with a `BoxedExpression`
@@ -1883,12 +1885,6 @@ export interface IComputeEngine {
   /** @hidden */
   readonly recursionLimit: number;
 
-  numericMode: NumericMode;
-
-  tolerance: number;
-
-  angularUnit: AngularUnit;
-
   chop(n: number): number;
   chop(n: Decimal): Decimal | 0;
   chop(n: Complex): Complex | 0;
@@ -1902,18 +1898,23 @@ export interface IComputeEngine {
 
   /** @internal */
   _numericValue(
-    value: number | Rational | Decimal | Complex | { re: number; im?: number }
+    value: number | Rational | Decimal | Complex | NumericValueData
   ): NumericValue;
-  /** @internal */
-  _toNumericValue(expr: BoxedExpression): [NumericValue, BoxedExpression];
-  /** @internal */
-  _fromNumericValue(
-    coeff: NumericValue,
-    expr?: BoxedExpression
-  ): BoxedExpression;
 
-  set precision(p: number | 'machine');
+  /** If the precision is set to `machine`, floating point numbers
+   * are represented internally as a 64-bit floating point number (as
+   * per IEEE 754-2008), with a 52-bit mantissa, which gives about 15
+   * digits of precision.
+   *
+   * If the precision is set to `auto`, the precision is set to 300 digits.
+   *
+   */
+  set precision(p: number | 'machine' | 'auto');
   get precision(): number;
+
+  tolerance: number;
+
+  angularUnit: AngularUnit;
 
   costFunction: (expr: BoxedExpression) => number;
 
@@ -1921,6 +1922,7 @@ export interface IComputeEngine {
 
   box(
     expr:
+      | NumericValue
       | Decimal
       | Complex
       | [num: number, denom: number]
@@ -1929,7 +1931,7 @@ export interface IComputeEngine {
   ): BoxedExpression;
 
   function(
-    head: string | BoxedExpression,
+    name: string,
     ops: ReadonlyArray<SemiBoxedExpression>,
     options?: { metadata?: Metadata; canonical?: CanonicalOptions }
   ): BoxedExpression;
@@ -1973,37 +1975,10 @@ export interface IComputeEngine {
 
   hold(expr: SemiBoxedExpression): BoxedExpression;
 
-  add(...ops: ReadonlyArray<BoxedExpression>): BoxedExpression;
+  tuple(...elements: ReadonlyArray<number>): BoxedExpression;
+  tuple(...elements: ReadonlyArray<BoxedExpression>): BoxedExpression;
 
-  evalMul(...ops: ReadonlyArray<BoxedExpression>): BoxedExpression;
-
-  pow(
-    base: BoxedExpression,
-    exponent: number | Rational | BoxedExpression
-  ): BoxedExpression;
-
-  inv(expr: BoxedExpression): BoxedExpression;
-
-  div(num: BoxedExpression, denom: BoxedExpression): BoxedExpression;
-
-  pair(
-    first: BoxedExpression,
-    second: BoxedExpression,
-    metadata?: Metadata
-  ): BoxedExpression;
-
-  tuple(elements: ReadonlyArray<number>, metadata?: Metadata): BoxedExpression;
-  tuple(
-    elements: ReadonlyArray<BoxedExpression>,
-    metadata?: Metadata
-  ): BoxedExpression;
-
-  array(
-    elements: ArrayValue[] | ArrayValue[][],
-    metadata?: Metadata
-  ): BoxedExpression;
-
-  rules(rules: Rule[]): BoxedRuleSet;
+  rules(rules: ReadonlyArray<Rule>): BoxedRuleSet;
 
   /**
    * Return a set of built-in rules.
@@ -2015,7 +1990,7 @@ export interface IComputeEngine {
   /**
    * This is a primitive to create a boxed function.
    *
-   * In general, consider using `ce.box()` or `ce.functin()` or
+   * In general, consider using `ce.box()` or `ce.function()` or
    * `canonicalXXX()` instead.
    *
    * The caller must ensure that the arguments are in canonical form:
@@ -2026,7 +2001,7 @@ export interface IComputeEngine {
    * @internal
    */
   _fn(
-    head: string | BoxedExpression,
+    name: string,
     ops: ReadonlyArray<BoxedExpression>,
     options?: Metadata & { canonical?: boolean }
   ): BoxedExpression;
@@ -2064,7 +2039,7 @@ export interface IComputeEngine {
     def: FunctionDefinition
   ): BoxedFunctionDefinition;
   lookupFunction(
-    head: string | BoxedExpression,
+    name: string,
     scope?: RuntimeScope | null
   ): undefined | BoxedFunctionDefinition;
 
@@ -2172,14 +2147,7 @@ export type JsonSerializationOptions = {
    *
    * **Default**: `["all"]`
    */
-  shorthands: (
-    | 'all'
-    | 'number'
-    | 'symbol'
-    | 'function'
-    | 'dictionary'
-    | 'string'
-  )[];
+  shorthands: ('all' | 'number' | 'symbol' | 'function' | 'string')[];
 
   /** A list of space separated keywords indicating which metadata should be
    * included in the MathJSON. If metadata is included, shorthand notation
@@ -2447,7 +2415,7 @@ export type BaseDefinition = {
   /** A short (about 1 line) description. May contain Markdown. */
   description?: string | string[];
 
-  /** A URL pointing to more information about this symbol or head. */
+  /** A URL pointing to more information about this symbol or operator. */
   url?: string;
 
   /**
@@ -2509,9 +2477,6 @@ export type FunctionSignature = {
    * this handler should account for it. Notably, if it is commutative, the
    * arguments should be sorted in canonical order.
    *
-   * The handler can make transformations based on the value of the arguments
-   * that are exact and literal (i.e.
-   * `arg.numericValue !== null && arg.isExact`).
    *
    * Values of symbols should not be substituted, unless they have
    * a `holdUntil` attribute of `"never"`.
@@ -2613,23 +2578,6 @@ export type FunctionSignature = {
    * Return `NaN` if there is enough information to  perform the
    * evaluation, but a literal argument is out of range or
    * not of the expected type.
-   *
-   * Use the value of `ce.numericMode` to determine how to perform
-   * the numeric evaluation.
-   *
-   * Note that regardless of the current value of `ce.numericMode`, the
-   * arguments may be boxed numbers representing machine numbers, bignum
-   * numbers, complex numbers, rationals or big rationals.
-   *
-   * If the numeric mode does not allow complex numbers (the
-   * `engine.numericMode` is not `"complex"` or `"auto"`) and the result of
-   * the evaluation would be a complex number, return `NaN` instead.
-   *
-   * If `ce.numericMode` is `"bignum"` or `"auto"` the evaluation should
-   * be done using bignums.
-   *
-   * Otherwise, `ce.numericMode` is `"machine", the evaluation should be
-   * performed using machine numbers.
    *
    * You may perform any necessary computations, including approximate
    * calculations on floating point numbers.

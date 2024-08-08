@@ -1,4 +1,3 @@
-import Complex from 'complex.js';
 import { Decimal } from 'decimal.js';
 
 import { BoxedExpression, IComputeEngine } from '../public';
@@ -6,6 +5,7 @@ import { BoxedExpression, IComputeEngine } from '../public';
 import { order } from '../boxed-expression/order';
 import {
   Rational,
+  asMachineRational,
   isOne,
   machineDenominator,
   machineNumerator,
@@ -15,9 +15,10 @@ import {
 } from '../numerics/rationals';
 import { asRationalSqrt } from '../library/arithmetic-power';
 
-import { flattenOps } from './flatten';
+import { flatten } from './flatten';
 import { asRational, add } from '../boxed-expression/numerics';
 import { NumericValue } from '../numeric-value/public';
+import { mul } from '../library/arithmetic-multiply';
 
 /**
  * Group terms in a product by common term.
@@ -77,13 +78,19 @@ export class Product {
    */
   mul(term: BoxedExpression) {
     console.assert(term.isCanonical);
+    if (this.coefficient.isNaN) return;
 
-    if (term.head === 'Multiply') {
+    if (term.isNaN) {
+      this.coefficient = this.engine._numericValue(NaN);
+      return;
+    }
+
+    if (term.operator === 'Multiply') {
       for (const t of term.ops!) this.mul(t);
       return;
     }
 
-    if (term.head === 'Negate') {
+    if (term.operator === 'Negate') {
       this.mul(term.op1);
       this.coefficient = this.coefficient.neg();
       return;
@@ -94,7 +101,8 @@ export class Product {
 
       // If we're calculation a canonical  product, fold exact literals into
       // running terms
-      if (term.numericValue !== null) {
+      const num = term.numericValue;
+      if (num !== null) {
         if (term.isOne) return;
 
         if (term.isZero) {
@@ -115,89 +123,101 @@ export class Product {
           return;
         }
 
-        const num = term.numericValue;
-        if (num !== null) {
-          this.coefficient = this.coefficient.mul(
-            num instanceof Decimal || num instanceof Complex
-              ? this.engine._numericValue(num)
-              : num
-          );
-          return;
-        }
+        this.coefficient = this.coefficient.mul(
+          num instanceof Decimal || typeof num === 'number'
+            ? num
+            : this.engine._numericValue(num)
+        );
+        return;
       }
 
       const radical = asRationalSqrt(term);
       if (radical) {
-        this.coefficient = this.coefficient.mul({
-          radical: (radical[0] as number) * (radical[1] as number),
-          rational: [1, Number(radical[1])],
-        });
+        this.coefficient = this.coefficient.mul(
+          this.engine._numericValue({
+            radical: (radical[0] as number) * (radical[1] as number),
+            rational: [1, Number(radical[1])],
+          })
+        );
         return;
       }
     }
 
-    let rest = term;
     if (this._isCanonical && !term.symbol) {
       // If possible, factor out a rational coefficient
       let coef: NumericValue;
-      [coef, rest] = this.engine._toNumericValue(term);
+      [coef, term] = term.toNumericValue();
       this.coefficient = this.coefficient.mul(coef);
     }
 
-    // Note: rest should be positive, so no need to handle the -1 case
-    if (rest.isOne) return;
+    // Note: term should be positive, so no need to handle the -1 case
+    if (term.isOne) return;
 
     // If this is a power expression, extract the exponent
     let exponent: Rational = [1, 1];
-    if (rest.head === 'Power') {
+    if (term.operator === 'Power') {
       // Term is `Power(op1, op2)`
-      const r = asRational(rest.op2);
+      const r = asRational(term.op2);
       if (r) {
-        const exponentExpr = rest.op2;
+        const exponentExpr = term.op2;
         exponent = r;
-        rest = rest.op1;
-        if (rest.head === 'Multiply') {
+        term = term.op1;
+        if (term.operator === 'Multiply') {
           // We have Power(Multiply(...), exponent): apply the power law
           // to each term
-          for (const x of rest.ops!)
+          for (const x of term.ops!)
             this.mul(this.engine._fn('Power', [x, exponentExpr]));
           return;
-        } else if (rest.head === 'Divide') {
+        } else if (term.operator === 'Divide') {
           // We have Power(Divide(...), exponent): apply the power law
           // to each term
-          this.mul(this.engine._fn('Power', [rest.op1, exponentExpr]));
+          this.mul(this.engine._fn('Power', [term.op1, exponentExpr]));
           this.mul(
             this.engine._fn('Power', [
-              rest.op2,
+              term.op2,
               this.engine.number(neg(exponent)),
             ])
           );
           return;
         }
       }
-    } else if (rest.head === 'Divide') {
-      this.mul(rest.op1);
-      exponent = [-1, 1];
-      rest = rest.op2;
+    } else if (term.operator === 'Divide') {
+      // In order to correctly account for the denominator, invert it.
+      // For example, in the case `a^4/a^2' we want to add
+      // `a^(-2)` to the product, not `1/a^2`. The former will get the exponent
+      // extracted, while the latter will consider the denominator as a
+      // separate term.
+      const inv = term.op2.inv();
+      // If the inverse is not a Divide, multiply it, otherwise keep it as
+      // a term
+      if (inv.operator !== 'Divide') {
+        this.mul(term.op1);
+        this.mul(inv);
+        return;
+      }
+      if (term.op1.isOne) {
+        term = term.op2;
+        exponent = [-1, 1];
+      }
     }
 
     // Look for the base, and add the exponent if already in the list of terms
     let found = false;
     for (const x of this.terms) {
-      if (x.term.isSame(rest)) {
+      if (x.term.isSame(term)) {
         x.exponent = add(x.exponent, exponent);
         found = true;
         break;
       }
     }
-    if (!found) this.terms.push({ term: rest, exponent });
+    if (!found) this.terms.push({ term, exponent });
   }
 
   /** Divide the product by a term of coefficient */
   div(term: NumericValue | BoxedExpression) {
     if (term instanceof NumericValue)
       this.coefficient = this.coefficient.div(term);
-    else this.mul(term.engine.inv(term));
+    else this.mul(term.inv());
   }
 
   /** The terms of the product, grouped by degrees.
@@ -233,12 +253,16 @@ export class Product {
     const ce = this.engine;
     const xs: { exponent: Rational; terms: BoxedExpression[] }[] = [];
     if (!this.coefficient.isOne) {
-      if (mode === 'rational' && this.coefficient.isExact) {
+      if (
+        mode === 'rational' &&
+        this.coefficient.isExact &&
+        this.coefficient.im === 0
+      ) {
         // Numerator
-        let num = ce._fromNumericValue(this.coefficient.num);
+        const num = ce.box(this.coefficient.num);
         if (!num.isOne) xs.push({ exponent: [1, 1], terms: [num] });
         // Denominator
-        const denom = ce._fromNumericValue(this.coefficient.denom);
+        const denom = ce.box(this.coefficient.denom);
         if (!denom.isOne) xs.push({ exponent: [-1, 1], terms: [denom] });
       } else if (mode === 'numeric') {
         const c = this.coefficient.N();
@@ -249,7 +273,7 @@ export class Product {
       } else {
         xs.push({
           exponent: [1, 1],
-          terms: [ce._fromNumericValue(this.coefficient)],
+          terms: [ce.box(this.coefficient)],
         });
       }
     }
@@ -278,6 +302,7 @@ export class Product {
     const ce = this.engine;
 
     const coef = this.coefficient;
+    if (coef.isNaN) return ce.NaN;
     if (coef.isPositiveInfinity) return ce.PositiveInfinity;
     if (coef.isNegativeInfinity) return ce.NegativeInfinity;
     if (coef.isZero) return ce.Zero;
@@ -359,11 +384,11 @@ export function commonTerms(lhs: Product, rhs: Product): BoxedExpression {
     if (!y) continue;
     const exponent = rationalGcd(x.exponent, y.exponent);
     if (isOne(exponent)) xs.push(x.term);
-    else xs.push(ce.pow(x.term, exponent));
+    else xs.push(x.term.pow(asMachineRational(exponent)));
   }
 
   // Put everything together
-  return ce.function('Multiply', [ce._fromNumericValue(coef), ...xs]);
+  return mul(ce.box(coef), ...xs);
 }
 
 // Put the exponents in a bucket:
@@ -410,16 +435,15 @@ function termsAsExpression(
   ce: IComputeEngine,
   terms: { exponent: Rational; terms: ReadonlyArray<BoxedExpression> }[]
 ): BoxedExpression {
-  let result: ReadonlyArray<BoxedExpression> = terms
-    .sort(degreeOrder)
-    .map((x) => {
-      const t = flattenOps(x.terms, 'Multiply');
-      const base =
-        t.length <= 1 ? t[0] : ce._fn('Multiply', [...t].sort(order));
-      return ce.pow(base, x.exponent);
-    });
-  result = flattenOps(result, 'Multiply') ?? result;
+  let result = terms.map(({ terms, exponent }) => {
+    const t = flatten(terms, 'Multiply');
+    const base = t.length <= 1 ? t[0] : ce._fn('Multiply', [...t].sort(order));
+    return isOne(exponent) ? base : base.pow(ce.number(exponent));
+  });
+
+  result = flatten(result, 'Multiply');
   if (result.length === 0) return ce.One;
   if (result.length === 1) return result[0];
-  return ce._fn('Multiply', [...result].sort(order));
+
+  return ce._fn('Multiply', result.sort(order));
 }

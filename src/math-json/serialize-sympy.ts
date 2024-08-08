@@ -1,11 +1,11 @@
-import { Expression } from './math-json-format';
-import { op, machineValue, symbol, head, ops } from './utils';
+import { Expression } from './types';
+import { operand, machineValue, symbol, operator, operands } from './utils';
 
 function serializeBaseForm(expr: Expression): string | null {
-  if (head(expr) !== 'BaseForm') return null;
-  const op1 = machineValue(op(expr, 1));
+  if (operator(expr) !== 'BaseForm') return null;
+  const op1 = machineValue(operand(expr, 1));
   if (op1 === null || !Number.isInteger(op1) || op1 < 0) return null;
-  const base = machineValue(op(expr, 2)) ?? 10;
+  const base = machineValue(operand(expr, 2)) ?? 10;
   if (base === 2) return `0b${op1.toString(2)}`;
   if (base === 8) return `0o${op1.toString(8)}`;
   if (base === 16) return `0x${op1.toString(16)}`;
@@ -13,9 +13,9 @@ function serializeBaseForm(expr: Expression): string | null {
 }
 
 function serializeNumber(expr: Expression): string | null {
-  if (head(expr) === 'Complex') {
-    const op1 = op(expr, 1);
-    const op2 = op(expr, 2);
+  if (operator(expr) === 'Complex') {
+    const op1 = operand(expr, 1);
+    const op2 = operand(expr, 2);
     if (op1 === null || op2 === null) return null;
     if (machineValue(op1) === 0) {
       return serializeNumber(op2) + 'j';
@@ -24,15 +24,15 @@ function serializeNumber(expr: Expression): string | null {
     return '(' + serializeNumber(op1) + ' + ' + serializeNumber(op2) + 'j)';
   }
 
-  if (head(expr) === 'Rational') {
-    const op1 = op(expr, 1);
-    const op2 = op(expr, 2);
+  if (operator(expr) === 'Rational') {
+    const op1 = operand(expr, 1);
+    const op2 = operand(expr, 2);
     if (op1 === null || op2 === null) return null;
     return `Rational(${serializeNumber(op1)},${serializeNumber(op2)})`;
   }
 
-  if (head(expr) === 'Number') {
-    const op1 = machineValue(op(expr, 1));
+  if (operator(expr) === 'Number') {
+    const op1 = machineValue(operand(expr, 1));
     if (op1 === null) return null;
     return op1.toString();
   }
@@ -54,16 +54,16 @@ function serializeFunction(expr: Expression): string | null {
   const result = serializeBaseForm(expr);
   if (result !== null) return result;
 
-  const h = head(expr);
-  if (h === null) return null;
+  const h = operator(expr);
+  if (!h) return null;
 
   // @todo Convert special head:
   // Add, Multiply, Root, Power, Exp, Subtract, Divide, Negate,
   // List, Tuple, Pair, KeyValuePair,
   // String, Number,
 
-  const args = ops(expr);
-  if (args === null) return null;
+  const args = operands(expr);
+  if (args.length === 0) return null;
   return `${h}(${args.map((x) => serializeExpression(x) ?? '')})`;
   // @todo lambdas
 }

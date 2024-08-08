@@ -1,5 +1,8 @@
 import Complex from 'complex.js';
 import { BoxedExpression, IComputeEngine } from '../public';
+import { isRelationalOperator } from '../boxed-expression/utils';
+import { mul } from '../library/arithmetic-multiply';
+import { add } from '../numerics/terms';
 
 export type DataTypeMap = {
   float64: number;
@@ -316,11 +319,11 @@ export class TensorFieldExpression implements TensorField<BoxedExpression> {
   }
 
   add(lhs: BoxedExpression, rhs: BoxedExpression): BoxedExpression {
-    return this.ce.add(lhs, rhs);
+    return lhs.add(rhs);
   }
 
   addn(...xs: BoxedExpression[]): BoxedExpression {
-    return this.ce.add(...xs);
+    return add(...xs);
   }
 
   neg(x: BoxedExpression): BoxedExpression {
@@ -328,27 +331,27 @@ export class TensorFieldExpression implements TensorField<BoxedExpression> {
   }
 
   sub(lhs: BoxedExpression, rhs: BoxedExpression): BoxedExpression {
-    return this.ce.add(lhs, rhs.neg());
+    return lhs.sub(rhs);
   }
 
   mul(lhs: BoxedExpression, rhs: BoxedExpression): BoxedExpression {
-    return this.ce.evalMul(lhs, rhs);
+    return lhs.mul(rhs);
   }
 
   muln(...xs: BoxedExpression[]): BoxedExpression {
-    return this.ce.evalMul(...xs);
+    return mul(...xs);
   }
 
   div(lhs: BoxedExpression, rhs: BoxedExpression): BoxedExpression {
-    return this.ce.div(lhs, rhs);
+    return lhs.div(rhs);
   }
 
   pow(lhs: BoxedExpression, rhs: number): BoxedExpression {
-    return this.ce.pow(lhs, rhs);
+    return lhs.pow(rhs);
   }
 
   conjugate(x: BoxedExpression): BoxedExpression {
-    return this.ce.box(['Conjugate', x]);
+    return this.ce.function('Conjugate', [x]);
   }
 }
 
@@ -481,9 +484,10 @@ export class TensorFieldComplex implements TensorField<Complex> {
 }
 
 export function getSupertype(
-  t1: TensorDataType,
+  t1: TensorDataType | undefined,
   t2: TensorDataType
 ): TensorDataType {
+  if (t1 === undefined) return t2;
   // Of the two types, return the one which is the most generic, i.e.
   // the least upper bound (LUB) or supertype
   // If the two types are incompatible, return undefined
@@ -504,6 +508,9 @@ export function getSupertype(
 export function getExpressionDatatype(expr: BoxedExpression): TensorDataType {
   // Depending on whether the expr is a literal number, a string, etc, set the dtype
   // appropriately
+
+  if (isRelationalOperator(expr)) return 'bool';
+
   const val = expr.value;
   if (typeof val === 'number') {
     if (Number.isInteger(val)) {

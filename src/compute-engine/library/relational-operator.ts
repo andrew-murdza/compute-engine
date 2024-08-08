@@ -1,12 +1,11 @@
+import { signDiff } from '../boxed-expression/numerics';
 import { isRelationalOperator } from '../boxed-expression/utils';
-import { checkPure } from '../boxed-expression/validate';
 import {
   BoxedExpression,
   IComputeEngine,
   IdentifierDefinitions,
 } from '../public';
-import { flattenOps, flattenSequence } from '../symbolic/flatten';
-import { canonical } from '../symbolic/utils';
+import { flatten } from '../symbolic/flatten';
 
 //   // eq, lt, leq, gt, geq, neq, approx
 //   //     shortLogicalImplies: 52, // ➔
@@ -28,8 +27,8 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
         if (ops.length < 3) return undefined;
         return ce
           ._fn('Equal', [
-            ce.box(['Mod', ops[0], ops[2]]).simplify(),
-            ce.box(['Mod', ops[1], ops[2]]).simplify(),
+            ce.function('Mod', [ops[0], ops[2]]).simplify(),
+            ce.function('Mod', [ops[1], ops[2]]).simplify(),
           ])
           .simplify();
       },
@@ -121,12 +120,11 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
         if (ops.length < 2) return ce.True;
         let lhs: BoxedExpression | undefined = undefined;
         for (const arg of ops!) {
-          if (!arg.isNumber) return undefined;
           if (!lhs) lhs = arg;
           else {
-            const test = ce.box(['Subtract', arg, lhs]).N().sgn; // @fixme: use signdiff
-            if (test === null || test === undefined) return undefined;
-            if (test <= 0) return ce.False; // @fixme: shouldn't that be test < 0?
+            const s = signDiff(arg, lhs);
+            if (s === undefined) return undefined;
+            if (s <= 0) return ce.False;
             lhs = arg;
           }
         }
@@ -151,22 +149,6 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
       domain: 'RelationalOperators',
       canonical: (ce, ops) =>
         canonicalRelational(ce, 'Less', [...ops].reverse()),
-
-      evaluate: (ce, ops) => {
-        if (ops.length < 2) return ce.True;
-        let lhs: BoxedExpression | undefined = undefined;
-        for (const arg of ops!) {
-          if (!arg.isNumber) return undefined;
-          if (!lhs) lhs = arg;
-          else {
-            const test = ce.box(['Subtract', arg, lhs]).N().sgn;
-            if (test === null || test === undefined) return undefined;
-            if (test >= 0) return ce.False;
-            lhs = arg;
-          }
-        }
-        return ce.True;
-      },
     },
   },
   NotGreater: {
@@ -188,12 +170,11 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
         if (ops.length < 2) return ce.True;
         let lhs: BoxedExpression | undefined = undefined;
         for (const arg of ops!) {
-          if (!arg.isNumber) return undefined;
           if (!lhs) lhs = arg;
           else {
-            const test = ce.box(['Subtract', arg, lhs]).N().sgn;
-            if (test === null || test === undefined) return undefined;
-            if (test < 0) return ce.False;
+            const s = signDiff(arg, lhs);
+            if (s === undefined) return undefined;
+            if (s < 0) return ce.False;
             lhs = arg;
           }
         }
@@ -218,22 +199,6 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
 
       canonical: (ce, args) =>
         canonicalRelational(ce, 'LessEqual', [...args].reverse()),
-
-      evaluate: (ce, ops) => {
-        if (ops.length < 2) return ce.True;
-        let lhs: BoxedExpression | undefined = undefined;
-        for (const arg of ops!) {
-          if (!arg.isNumber) return undefined;
-          if (!lhs) lhs = arg;
-          else {
-            const test = ce.box(['Subtract', arg, lhs]).N().sgn;
-            if (test === null || test === undefined) return undefined;
-            if (test > 0) return ce.False;
-            lhs = arg;
-          }
-        }
-        return ce.True;
-      },
     },
   },
 
@@ -378,10 +343,10 @@ export const RELOP_LIBRARY: IdentifierDefinitions = {
 
 function canonicalRelational(
   ce: IComputeEngine,
-  head: string,
+  operator: string,
   ops: ReadonlyArray<BoxedExpression>
 ): BoxedExpression {
-  ops = flattenOps(flattenSequence(canonical(ops)), head);
+  ops = flatten(ops, operator);
 
   const nestedRelational: BoxedExpression[] = [];
   const newOps: BoxedExpression[] = [];
@@ -393,9 +358,9 @@ function canonicalRelational(
     } else newOps.push(op);
   }
 
-  if (nestedRelational.length === 0) return ce._fn(head, newOps);
+  if (nestedRelational.length === 0) return ce._fn(operator, newOps);
 
-  return ce._fn('And', [ce._fn(head, newOps), ...nestedRelational]);
+  return ce._fn('And', [ce._fn(operator, newOps), ...nestedRelational]);
 
   // if (!ops.every((op) => op.isValid))
 }

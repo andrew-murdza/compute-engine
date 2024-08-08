@@ -6,22 +6,17 @@ import {
 } from '../public';
 
 import {
-  op,
-  head,
+  operand,
+  operator,
   getSequence,
   dictionary,
   stringValue,
   machineValue,
-  ops,
+  operands,
   isEmptySequence,
-  isNumberExpression,
   symbol,
 } from '../../../math-json/utils';
-import {
-  Expression,
-  MathJsonFunction,
-  MathJsonIdentifier,
-} from '../../../math-json/math-json-format';
+import { Expression, MathJsonIdentifier } from '../../../math-json/types';
 import { joinLatex } from '../tokenizer';
 
 function parseSingleArg(cmd: string): (parser: Parser) => Expression {
@@ -138,21 +133,19 @@ export const DEFINITIONS_OTHERS: LatexDictionary = [
       let rhs = parser.parseGroup() ?? 'Nothing';
       if (rhs !== 'Nothing' && !isEmptySequence(rhs)) {
         const args = parser.parseArguments() ?? ['Nothing'];
-        rhs = [rhs as MathJsonIdentifier | MathJsonFunction, ...args];
+        rhs = [rhs as MathJsonIdentifier, ...args];
       }
       return ['PartialDerivative', rhs, sub, sup] as Expression;
     },
     serialize: (serializer: Serializer, expr: Expression): string => {
       let result = '\\partial';
-      const fn = op(expr, 1);
-      const vars = op(expr, 2);
-      const degree = op(expr, 3);
+      const fn = operand(expr, 1);
+      const vars = operand(expr, 2);
+      const degree = operand(expr, 3);
       if (vars !== null && vars !== 'Nothing') {
-        if (head(vars) === 'List') {
+        if (operator(vars) === 'List') {
           result +=
-            '_{' +
-            serializer.serialize(['Sequence', ...(ops(vars) ?? [])]) +
-            '}';
+            '_{' + serializer.serialize(['Sequence', ...operands(vars)]) + '}';
         } else {
           result += '_{' + serializer.serialize(vars) + '}';
         }
@@ -299,9 +292,9 @@ export const DEFINITIONS_OTHERS: LatexDictionary = [
   {
     name: 'Style',
     serialize: (serializer, expr): string => {
-      let result = serializer.serialize(op(expr, 1));
+      let result = serializer.serialize(operand(expr, 1));
 
-      const dict = dictionary(op(expr, 2));
+      const dict = dictionary(operand(expr, 2));
       if (dict === null) return result;
 
       if (stringValue(dict.display) === 'block')
@@ -378,12 +371,12 @@ export const DEFINITIONS_OTHERS: LatexDictionary = [
     // `["HorizontalSpacing", number]` -> indicate a space of mu units
     // `["HorizontalSpacing", expr, 'op'|'bin'|rel]` -> indicate a spacing around and expression, i.e. `\mathbin{x}`, etc...
     serialize: (serializer, expr): string => {
-      if (op(expr, 2)) {
+      if (operand(expr, 2)) {
         // @todo: handle op(expr,2) == 'op', 'bin', etc...
-        return serializer.serialize(op(expr, 1));
+        return serializer.serialize(operand(expr, 1));
       }
 
-      const v = machineValue(op(expr, 1));
+      const v = machineValue(operand(expr, 1));
       if (v === null) return '';
       return (
         {

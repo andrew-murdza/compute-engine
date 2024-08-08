@@ -1,10 +1,7 @@
 import Complex from 'complex.js';
 import { Decimal } from 'decimal.js';
 
-import {
-  MathJsonIdentifier,
-  MathJsonNumber,
-} from '../math-json/math-json-format';
+import { MathJsonIdentifier, MathJsonNumber } from '../math-json/types';
 
 import type {
   LibraryCategory,
@@ -15,7 +12,13 @@ import type {
 
 import { assume } from './assume';
 
-import { MACHINE_PRECISION, NUMERIC_TOLERANCE } from './numerics/numeric';
+import {
+  DEFAULT_PRECISION,
+  MACHINE_PRECISION,
+  MACHINE_TOLERANCE,
+  NUMERIC_BIGNUM_TOLERANCE,
+  NUMERIC_MACHINE_TOLERANCE,
+} from './numerics/numeric';
 
 import {
   AssumeResult,
@@ -24,7 +27,6 @@ import {
   IComputeEngine,
   IdentifierDefinitions,
   ExpressionMapInterface,
-  NumericMode,
   RuntimeScope,
   Scope,
   SymbolDefinition,
@@ -38,7 +40,6 @@ import {
   BoxedSubstitution,
   AssignValue,
   DomainLiteral,
-  ArrayValue,
   AngularUnit,
   CanonicalOptions,
 } from './public';
@@ -54,30 +55,23 @@ import {
 
 import { DEFAULT_COST_FUNCTION } from './cost-function';
 import { ExpressionMap } from './boxed-expression/expression-map';
-import { asLatexString, bignumPreferred } from './boxed-expression/utils';
+import { asLatexString } from './boxed-expression/utils';
 import { boxRules } from './rules';
 import { BoxedString } from './boxed-expression/boxed-string';
 import { BoxedNumber } from './boxed-expression/boxed-number';
 import { _BoxedSymbolDefinition } from './boxed-expression/boxed-symbol-definition';
-import { canonicalPower } from './library/arithmetic-power';
 import { BoxedFunction } from './boxed-expression/boxed-function';
-import { evalMultiply } from './library/arithmetic-multiply';
-import { evalDivide } from './library/arithmetic-divide';
 import {
   BoxedSymbol,
   makeCanonicalSymbol,
 } from './boxed-expression/boxed-symbol';
 import { _BoxedDomain, isDomain } from './boxed-expression/boxed-domain';
 import { _BoxedExpression } from './boxed-expression/abstract-boxed-expression';
-import { isValidIdentifier, validateIdentifier } from '../math-json/utils';
 import {
   makeFunctionDefinition,
   _BoxedFunctionDefinition,
 } from './boxed-expression/boxed-function-definition';
-import { Rational, inverse, isRational, isOne } from './numerics/rationals';
-import { negate } from './symbolic/negate';
-import { flattenOps, flattenSequence } from './symbolic/flatten';
-import { bigint } from './numerics/numeric-bigint';
+import { Rational, isRational, asMachineRational } from './numerics/rationals';
 import { parseFunctionSignature } from './function-utils';
 import { CYAN, INVERSE_RED, RESET, YELLOW } from '../common/ansi-codes';
 import {
@@ -85,7 +79,6 @@ import {
   DOMAIN_CONSTRUCTORS,
   isDomainLiteral,
 } from './library/domains';
-import { canonical } from './symbolic/utils';
 import { domainToSignature } from './domain-utils';
 import {
   IndexedLatexDictionary,
@@ -103,18 +96,15 @@ import {
 import './boxed-expression/serialize';
 import { SIMPLIFY_RULES } from './simplify-rules';
 import { HARMONIZATION_RULES, UNIVARIATE_ROOTS } from './solve';
-import { NumericValue } from './numeric-value/public';
+import { NumericValue, NumericValueData } from './numeric-value/public';
+import { ExactNumericValue } from './numeric-value/exact-numeric-value';
+import { isInMachineRange } from './numerics/numeric-bignum';
+import { BigNumericValue } from './numeric-value/big-numeric-value';
+import { MachineNumericValue } from './numeric-value/machine-numeric-value';
 import {
-  ExactNumericValue,
-  ExactNumericValueData,
-} from './numeric-value/exact-numeric-value';
-import {
-  asFloat,
-  asMachineInteger,
-  asRational,
-} from './boxed-expression/numerics';
-import { factor } from './boxed-expression/factor';
-import { Terms } from './numerics/terms';
+  isValidIdentifier,
+  validateIdentifier,
+} from '../math-json/identifiers';
 
 /**
  *
@@ -168,6 +158,7 @@ export class ComputeEngine implements IComputeEngine {
   readonly One: BoxedExpression;
   readonly Half: BoxedExpression;
   readonly NegativeOne: BoxedExpression;
+  readonly Two: BoxedExpression;
   readonly I: BoxedExpression;
   readonly NaN: BoxedExpression;
   readonly PositiveInfinity: BoxedExpression;
@@ -208,9 +199,6 @@ export class ComputeEngine implements IComputeEngine {
 
   /** @internal */
   private _precision: number;
-
-  /** @internal */
-  private _numericMode: NumericMode;
 
   /** @ internal */
   private _angularUnit: AngularUnit;
@@ -365,13 +353,9 @@ export class ComputeEngine implements IComputeEngine {
    * as domains (`Booleans`, `Numbers`, etc...) that are used by later
    * dictionaries.
    *
-   * @param options.numericMode The default mode is `"auto"`. Use `"machine"`
-   * to perform numeric calculations using 64-bit floats. Use `"bignum"` to
-   * perform calculations using arbitrary precision floating point numbers.
-   * Use `"auto"` or `"complex"` to allow calculations on complex numbers.
    *
-   * @param options.numericPrecision Specific how many digits of precision
-   * for the numeric calculations. Default is 100.
+   * @param options.precision Specific how many digits of precision
+   * for the numeric calculations. Default is 300.
    *
    * @param options.tolerance If the absolute value of the difference of two
    * numbers is less than `tolerance`, they are considered equal. Used by
@@ -379,8 +363,7 @@ export class ComputeEngine implements IComputeEngine {
    */
   constructor(options?: {
     ids?: readonly IdentifierDefinitions[];
-    numericMode?: NumericMode;
-    numericPrecision?: number;
+    precision?: number | 'machine';
     tolerance?: number;
   }) {
     if (options !== undefined && typeof options !== 'object')
@@ -394,16 +377,15 @@ export class ComputeEngine implements IComputeEngine {
       expressions: new Set<BoxedExpression>(),
     };
 
-    // Set the default precision for `bignum` calculations
-    this._numericMode = options?.numericMode ?? 'auto';
-    this._precision = Math.max(
-      options?.numericPrecision ?? 100,
-      Math.floor(MACHINE_PRECISION)
-    );
+    // Set the default precision for calculations
+    let precision = options?.precision ?? DEFAULT_PRECISION;
+    if (precision === 'machine') precision = Math.floor(MACHINE_PRECISION);
+    this._bignum = Decimal.clone({ precision });
 
-    this._bignum = Decimal.clone({ precision: this._precision });
+    this._tolerance = NUMERIC_MACHINE_TOLERANCE;
+    this._bignumTolerance = new this._bignum(NUMERIC_BIGNUM_TOLERANCE);
 
-    this.tolerance = options?.tolerance ?? NUMERIC_TOLERANCE;
+    if (options?.tolerance !== undefined) this.tolerance = options.tolerance;
 
     this._angularUnit = 'rad';
 
@@ -411,6 +393,7 @@ export class ComputeEngine implements IComputeEngine {
     this.One = new BoxedNumber(this, 1);
     this.Half = new BoxedNumber(this, [1, 2]);
     this.NegativeOne = new BoxedNumber(this, -1);
+    this.Two = new BoxedNumber(this, 2);
     this.NaN = new BoxedNumber(this, Number.NaN);
     this.PositiveInfinity = new BoxedNumber(this, Number.POSITIVE_INFINITY);
     this.NegativeInfinity = new BoxedNumber(this, Number.NEGATIVE_INFINITY);
@@ -516,15 +499,15 @@ export class ComputeEngine implements IComputeEngine {
     this._BIGNUM_PI = this._BIGNUM_NEGATIVE_ONE.acos();
 
     // Recreate the numeric values
-    this._NUMERIC_VALUE_NEGATIVE_ONE = new ExactNumericValue({
-      rational: [-1, 1],
-    });
-    this._NUMERIC_VALUE_ZERO = new ExactNumericValue({
-      rational: [0, 1],
-    });
-    this._NUMERIC_VALUE_ONE = new ExactNumericValue({
-      rational: [1, 1],
-    });
+    this._NUMERIC_VALUE_NEGATIVE_ONE = new ExactNumericValue(-1, (x) =>
+      this._numericValue(x)
+    );
+    this._NUMERIC_VALUE_ZERO = new ExactNumericValue(0, (x) =>
+      this._numericValue(x)
+    );
+    this._NUMERIC_VALUE_ONE = new ExactNumericValue(1, (x) =>
+      this._numericValue(x)
+    );
 
     // Reset all the known expressions/symbols
     const symbols = this._stats.symbols.values();
@@ -623,8 +606,6 @@ export class ComputeEngine implements IComputeEngine {
   _bignum: Decimal.Constructor;
 
   get precision(): number {
-    if (this._numericMode === 'machine' || this._numericMode === 'complex')
-      return Math.floor(MACHINE_PRECISION);
     return this._precision;
   }
 
@@ -639,8 +620,9 @@ export class ComputeEngine implements IComputeEngine {
    * Trigonometric operations are accurate for precision up to 1,000.
    *
    */
-  set precision(p: number | 'machine') {
+  set precision(p: number | 'machine' | 'auto') {
     if (p === 'machine') p = Math.floor(MACHINE_PRECISION);
+    if (p === 'auto') p = DEFAULT_PRECISION;
     const currentPrecision = this._precision;
 
     if (p === currentPrecision) return;
@@ -653,35 +635,14 @@ export class ComputeEngine implements IComputeEngine {
 
     this._precision = Math.max(p, Math.floor(MACHINE_PRECISION));
 
-    if (
-      this._numericMode !== 'auto' &&
-      this._numericMode !== 'bignum' &&
-      this._precision > Math.floor(MACHINE_PRECISION)
-    )
-      this._numericMode = 'auto';
-
     this._bignum = this._bignum.config({ precision: this._precision });
+
+    // Reset the tolerance
+    this.tolerance = NUMERIC_MACHINE_TOLERANCE;
+    // this.tolerance = 10 ** -(this._precision - 5);
 
     // Reset the caches
     // (the values in the cache depend on the current precision)
-    this.reset();
-  }
-
-  get numericMode(): NumericMode {
-    return this._numericMode;
-  }
-
-  /** {@inheritDoc  NumericMode} */
-  set numericMode(f: NumericMode) {
-    if (f === this._numericMode) return;
-
-    if (typeof f !== 'string') throw Error('Expected a string');
-
-    this._numericMode = f;
-    if (f === 'complex' || f === 'machine')
-      this._precision = Math.floor(MACHINE_PRECISION);
-
-    // Reset the caches: the values in the cache depend on the numeric mode)
     this.reset();
   }
 
@@ -739,10 +700,11 @@ export class ComputeEngine implements IComputeEngine {
    * equal to `a`.
    */
   set tolerance(val: number) {
-    if (typeof val === 'number' && Number.isFinite(val))
-      this._tolerance = Math.max(val, 0);
-    else this._tolerance = NUMERIC_TOLERANCE;
-    this._bignumTolerance = this.bignum(this._tolerance);
+    if (!Number.isFinite(val) || val <= 0) val = NUMERIC_MACHINE_TOLERANCE;
+
+    this._bignumTolerance = this.bignum(val);
+
+    this._tolerance = Math.min(MACHINE_TOLERANCE, val);
   }
 
   /** Replace a number that is close to 0 with the exact integer 0.
@@ -753,7 +715,10 @@ export class ComputeEngine implements IComputeEngine {
   chop(n: Decimal): Decimal | 0;
   chop(n: Complex): Complex | 0;
   chop(n: number | Decimal | Complex): number | Decimal | Complex {
-    if (typeof n === 'number' && Math.abs(n) <= this._tolerance) return 0;
+    if (typeof n === 'number') {
+      if (Math.abs(n) <= this._tolerance) return 0;
+      return n;
+    }
 
     if (n instanceof Decimal && n.abs().lte(this._bignumTolerance)) return 0;
 
@@ -887,238 +852,70 @@ export class ComputeEngine implements IComputeEngine {
   }
 
   _numericValue(
-    value: number | Rational | Decimal | Complex | { re?: number; im?: number }
+    value: number | Rational | Decimal | Complex | NumericValueData
   ): NumericValue {
-    // if (bignumPreferred(this))
-    // @fixme: handle other Numeric Values, i.e. PreciseExactNumericValue
-
     if (value === 1) return this._NUMERIC_VALUE_ONE;
     if (value === -1) return this._NUMERIC_VALUE_NEGATIVE_ONE;
     if (value === 0) return this._NUMERIC_VALUE_ZERO;
 
-    let machineValue: Partial<ExactNumericValueData>;
-    if (typeof value === 'number') machineValue = { re: value };
-    else if (isRational(value))
-      machineValue = { rational: value as [number, number] };
-    else if (value instanceof Decimal) machineValue = { re: value.toNumber() };
-    else if (value instanceof Complex)
-      machineValue = { re: value.re, im: value.im };
-    else machineValue = value as Partial<ExactNumericValueData>;
+    const factory =
+      this._precision > MACHINE_PRECISION
+        ? (x) => new BigNumericValue(x, (x) => this.bignum(x))
+        : (x) => new MachineNumericValue(x);
 
-    if (machineValue.re && (machineValue.re as any) instanceof Decimal)
-      machineValue.re = (machineValue.re as any as Decimal).toNumber();
-
-    // Convert BigRational to Rational
-    if (machineValue.rational)
-      machineValue.rational = [
-        Number(machineValue.rational[0]),
-        Number(machineValue.rational[1]),
-      ];
-    return new ExactNumericValue(machineValue);
-  }
-
-  /**
-   * Attempt to factor a numeric coefficient `c` and a `rest` out of a
-   * canonical expression `expr` such that `ce.mul(c, rest)` is equal to `expr`.
-   *
-   * Attempts to make `rest` a positive value (i.e. pulls out negative sign).
-   *
-   * For example:
-   *
-   * ['Multiply', 2, 'x', 3, 'a']
-   *    -> [NumericValue(6), ['Multiply', 'x', 'a']]
-   *
-   * ['Divide', ['Multiply', 2, 'x'], ['Multiply', 3, 'y', 'a']]
-   *    -> [NumericValue({rational: [2, 3]}), ['Divide', 'x', ['Multiply, 'y', 'a']]]
-   */
-
-  _toNumericValue(expr: BoxedExpression): [NumericValue, BoxedExpression] {
-    console.assert(expr.isCanonical);
-
-    if (expr.symbol === 'ImaginaryUnit')
-      return [this._numericValue({ im: 1 }), this.One];
-    if (expr.symbol === 'PositiveInfinity')
-      return [this._numericValue(Infinity), this.One];
-    if (expr.symbol === 'NegativeInfinity')
-      return [this._numericValue(-Infinity), this.One];
-    if (expr.symbol === 'NaN') return [this._numericValue(NaN), this.One];
-
-    if (expr.head === 'Complex') {
-      return [
-        this._numericValue({
-          re: asFloat(expr.op1) ?? 0,
-          im: asFloat(expr.op2) ?? 0,
-        }),
-        this.One,
-      ];
+    if (typeof value === 'number') {
+      if (Number.isInteger(value)) return new ExactNumericValue(value, factory);
+      return factory(value);
     }
 
-    //
-    // Add
-    //
-    //  use factor() to factor out common factors
-    if (expr.head === 'Add') expr = factor(expr);
-
-    //
-    // Negate
-    //
-    if (expr.head === 'Negate') {
-      const [coef, rest] = this._toNumericValue(expr.op1);
-      return [coef.neg(), rest];
+    if (isRational(value)) {
+      return new ExactNumericValue(
+        { rational: asMachineRational(value) },
+        factory
+      );
     }
 
-    //
-    // Multiply
-    //
-    if (expr.head === 'Multiply') {
-      const rest: BoxedExpression[] = [];
-      let coef = this._NUMERIC_VALUE_ONE;
-      for (const arg of expr.ops!) {
-        const [c, r] = this._toNumericValue(arg);
-        coef = coef.mul(c);
-        if (!r.isOne) rest.push(r);
+    if (value instanceof Decimal) {
+      if (value.isInteger() && isInMachineRange(value))
+        return new ExactNumericValue(value.toNumber(), factory);
+      return factory(value);
+    }
+
+    if (value instanceof Complex) {
+      if (value.im === 0) return this._numericValue(value.re);
+      if (Number.isInteger(value.im) && Number.isInteger(value.re)) {
+        return new ExactNumericValue(
+          { im: value.im, rational: [value.re, 1] },
+          factory
+        );
       }
-      if (rest.length === 0) return [coef, this.One];
-      if (rest.length === 1) return [coef, rest[0]];
-      return [coef, this.function('Multiply', rest)];
+      return factory(value);
     }
 
     //
-    // Divide
-    //
-    if (expr.head === 'Divide') {
-      const [coef1, numer] = this._toNumericValue(expr.op1);
-      const [coef2, denom] = this._toNumericValue(expr.op2);
-      const coef = coef1.div(coef2);
-      if (denom.isOne) return [coef, numer];
-      return [coef, this.function('Divide', [numer, denom])];
-    }
-
-    //
-    // Power
-    //
-    if (expr.head === 'Power') {
-      // We can only extract a coef if the exponent is a literal
-      if (expr.op2.numericValue === null)
-        return [this._NUMERIC_VALUE_ONE, expr];
-
-      // eslint-disable-next-line prefer-const
-      let [coef, base] = this._toNumericValue(expr.op1);
-      if (coef.isOne) return [coef, expr];
-
-      const exponent = asMachineInteger(expr.op2);
-      if (exponent !== null)
-        return [coef.pow(exponent), this.function('Power', [base, expr.op2])];
-
-      if (asFloat(expr.op2) === 0.5)
-        return [coef.sqrt(), this.function('Sqrt', [base])];
-
-      return [this._NUMERIC_VALUE_ONE, expr];
-    }
-
-    if (expr.head === 'Sqrt') {
-      const [coef, rest] = this._toNumericValue(expr.op1);
-      return [coef.sqrt(), this.function('Sqrt', [rest])];
-    }
-
-    //
-    // Abs
-    //
-    if (expr.head === 'Abs') {
-      const [coef, rest] = this._toNumericValue(expr.op1);
-      return [coef.abs(), this.function('Abs', [rest])];
-    }
-    console.assert(expr.head !== 'Complex');
-    console.assert(expr.head !== 'Exp');
-    console.assert(expr.head !== 'Root');
-
-    // @todo:  could consider others.. `Ln`, trig functions
-
-    //
-    // Literal
+    // We have a NumericValueData
     //
 
-    // Make the part positive if the real part is negative
-    const v = expr.numericValue;
-    if (typeof v === 'number' || isRational(v) || v instanceof Decimal)
-      return [this._numericValue(v), this.One];
-    if (v instanceof Complex) return [this._numericValue(v), this.One];
+    // A decimal property indicates a non-exact number
+    if (value.decimal !== undefined) return factory(value);
 
-    const r = asRational(expr);
-    return r
-      ? [this._numericValue(r), this.One]
-      : [this._NUMERIC_VALUE_ONE, expr];
-  }
+    // If there's a non-Gaussian imaginary part, use non-exact representation
+    const im = value.im ?? 0;
+    if (!Number.isInteger(im)) return factory(value);
 
-  _fromNumericValue(
-    coeff: NumericValue,
-    expr?: BoxedExpression
-  ): BoxedExpression {
-    if (coeff.isZero) return this.Zero;
-    if (expr?.isOne) expr = undefined;
-    if (coeff.isOne) return expr ?? this.One;
-    if (coeff.isNegativeOne) return expr ? expr.neg() : this.NegativeOne;
+    // Validate radical part
+    if (value.radical !== undefined && !Number.isInteger(value.radical))
+      return factory(value);
 
-    if (!expr && coeff.radical === 1 && isOne(coeff.rational) && coeff.im === 0)
-      return this.number(coeff.bignumRe ?? coeff.re);
+    // Validate rational part
+    if (
+      value.rational &&
+      (!Number.isInteger(value.rational[0]) ||
+        !Number.isInteger(value.rational[1]))
+    )
+      return factory(value);
 
-    const terms: BoxedExpression[] = expr ? [expr] : [];
-
-    let sign = 1;
-
-    if (coeff.sign !== 0) {
-      // There is some real part
-      if (!coeff.isExact) {
-        // The real part is a floating point number
-        terms.push(this.number(coeff.bignumRe ?? coeff.re));
-      } else {
-        // The real part is a rational and/or radical
-        if (coeff.sign < 0) sign = -1;
-
-        if (coeff.radical === 1) {
-          // No radical, but a rational part
-          if (!isOne(coeff.rational)) terms.push(this.number(coeff.rational));
-        } else {
-          // At least a radical, maybe a rational as well.
-          const radical = this._fn('Sqrt', [this.number(coeff.radical)]);
-          if (isOne(coeff.rational)) terms.push(radical);
-          else {
-            const [n, d] = coeff.rational;
-            if (d === 1) {
-              if (n === 1) terms.push(radical);
-              else terms.push(this._fn('Multiply', [this.number(n), radical]));
-            } else {
-              if (n === 1)
-                terms.push(this._fn('Divide', [radical, this.number(d)]));
-              else
-                terms.push(
-                  this._fn('Divide', [
-                    this._fn('Multiply', [this.number(n), radical]),
-                    this.number(d),
-                  ])
-                );
-            }
-          }
-        }
-      }
-    }
-
-    let result: BoxedExpression;
-    if (coeff.im === 0) {
-      if (terms.length === 0) return this.Zero;
-      result = terms.length === 1 ? terms[0] : this.function('Multiply', terms);
-      if (sign < 0) return result.neg();
-      return result;
-    }
-
-    if (terms.length === 0) return this.number(this.complex(0, coeff.im));
-
-    result = terms.length === 1 ? terms[0] : this.function('Multiply', terms);
-    if (sign < 0) return result.neg();
-    return this.function('Add', [
-      result,
-      this.number(this.complex(0, coeff.im)),
-    ]);
+    return new ExactNumericValue(value, factory);
   }
 
   /**
@@ -1221,7 +1018,7 @@ export class ComputeEngine implements IComputeEngine {
   }
 
   /**
-   * Return the definition for a function matching this head.
+   * Return the definition for a function with this operator name.
    *
    * Start looking in the current context, than up the scope chain.
    *
@@ -1230,16 +1027,16 @@ export class ComputeEngine implements IComputeEngine {
    * to differentiate between symbols that might represent a function application, e.g. `f` vs `x`.
    */
   lookupFunction(
-    head: string | BoxedExpression,
+    name: MathJsonIdentifier,
     scope?: RuntimeScope | null
   ): undefined | BoxedFunctionDefinition {
-    if (typeof head !== 'string') return undefined;
+    if (typeof name !== 'string') return undefined;
 
     if (!this.context) return undefined;
 
     scope ??= this.context;
     while (scope) {
-      const def = scope.ids?.get(head);
+      const def = scope.ids?.get(name);
       if (def instanceof _BoxedFunctionDefinition) return def;
       scope = scope.parentScope;
     }
@@ -1753,7 +1550,7 @@ export class ComputeEngine implements IComputeEngine {
       // as a side effect of canonicalization.
       let expr = this.box(value, { canonical: false });
 
-      if (expr.head === 'Function') {
+      if (expr.operator === 'Function') {
         // If no arguments are specified in the signature, add the 'args'
         expr = this.box([
           'Function',
@@ -1910,6 +1707,7 @@ export class ComputeEngine implements IComputeEngine {
    */
   box(
     expr:
+      | NumericValue
       | Decimal
       | Complex
       | [num: number, denom: number]
@@ -1920,11 +1718,11 @@ export class ComputeEngine implements IComputeEngine {
   }
 
   function(
-    head: string,
+    name: string,
     ops: SemiBoxedExpression[],
-    options?: { metadata?: Metadata; canonical?: CanonicalOptions }
+    options?: { metadata?: Metadata; canonical: CanonicalOptions }
   ): BoxedExpression {
-    return boxFunction(this, head, ops, options);
+    return boxFunction(this, name, ops, options);
   }
 
   /**
@@ -1933,12 +1731,6 @@ export class ComputeEngine implements IComputeEngine {
    *
    * The result is canonical.
    */
-  // error(
-  //   message:
-  //     | MathJsonIdentifier
-  //     | [MathJsonIdentifier, ...SemiBoxedExpression[]],
-  //   where?: SemiBoxedExpression
-  // ): BoxedExpression;
   error(
     message:
       | MathJsonIdentifier
@@ -1998,153 +1790,22 @@ export class ComputeEngine implements IComputeEngine {
     return this._fn('Hold', [this.box(expr, { canonical: false })]);
   }
 
-  /**
-   * Shortcut for `this.box(["Add", ...]).evaluate()`.
-   *
-   */
-  add(...ops: BoxedExpression[]): BoxedExpression {
-    // Short path. Note that are arguments are **not** validated.
-    ops = flattenOps(flattenSequence(ops), 'Add').map((x) => x.evaluate());
-    return new Terms(this, ops).asExpression();
-  }
-
-  /**
-   *
-   * Shortcut for `this.box(["Multiply", ...]).evaluate()`
-   *
-   */
-  evalMul(...ops: ReadonlyArray<BoxedExpression>): BoxedExpression {
-    // Short path. Note that are arguments are **not** validated.
-    const flatOps = flattenOps(flattenSequence(ops), 'Multiply');
-    return evalMultiply(this, flatOps);
-  }
-
-  /**
-   *
-   * Shortcut for `this.box(["Divide", num, denom]).evaluate()`
-   *
-   * The result is canonical.
-   */
-  div(num: BoxedExpression, denom: BoxedExpression): BoxedExpression {
-    // Short path. Note that are arguments are **not** validated.
-
-    return evalDivide(this, num.canonical, denom.canonical);
-  }
-
-  /**
-   *
-   * Shortcut for `this.box(["Power", base, exponent]).evaluate()`
-   *
-   */
-  pow(
-    base: BoxedExpression,
-    exponent: number | Rational | BoxedExpression
-  ): BoxedExpression {
-    // Short path. Note that arguments are **not** validated.
-
-    if (typeof exponent === 'number' || isRational(exponent))
-      exponent = this.number(exponent);
-
-    return canonicalPower(base, exponent);
-  }
-
-  /**
-   *
-   * Shortcut for `this.box(["Divide", 1, expr]).evaluate()`
-   *
-   */
-  inv(expr: BoxedExpression): BoxedExpression {
-    // Short path. Note that are arguments are **not** validated.
-    if (expr.isOne) return this.One;
-    if (expr.isNegativeOne) return this.NegativeOne;
-    if (expr.isInfinity) return this.Zero;
-    const n = expr.numericValue;
-    if (n !== null) {
-      if (isRational(n)) return this.number(inverse(n));
-      if (typeof n === 'number' && Number.isInteger(n))
-        return this.number([1, n]);
-
-      if (n instanceof Decimal && n.isInteger())
-        return this.number([BigInt(1), bigint(n)]);
-      return this._fn('Divide', [this.One, expr]);
-    }
-
-    if (expr.head === 'Sqrt') return this._fn('Sqrt', [this.inv(expr.op1)]);
-
-    if (expr.head === 'Divide') return this._fn('Divide', [expr.op1, expr.op2]);
-
-    // Inverse(expr) -> expr^{-1}
-    let e = this.NegativeOne;
-
-    if (expr.head === 'Power') {
-      // Inverse(x^{-1}) -> x
-      if (expr.op2.isNegativeOne) return expr.op1;
-
-      // Inverse(x^n) -> x^{-n}
-      e = expr.op2.neg();
-      expr = expr.op1;
-    }
-    if (e.isNegativeOne) return this._fn('Divide', [this.One, expr]);
-    return this._fn('Power', [expr, e]);
-  }
-
-  /** Shortcut for `this.box(["Pair", ...])`
-   *
-   * The result is canonical.
-   */
-  pair(
-    first: BoxedExpression,
-    second: BoxedExpression,
-    metadata?: Metadata
-  ): BoxedExpression {
-    // Short path
-    return new BoxedFunction(
-      this,
-      'Tuple',
-      [first.canonical, second.canonical],
-      {
-        metadata,
-        canonical: true,
-      }
-    );
-  }
-
   /** Shortcut for `this.box(["Tuple", ...])`
    *
    * The result is canonical.
    */
-  tuple(elements: number[], metadata?: Metadata): BoxedExpression;
-  tuple(elements: BoxedExpression[], metadata?: Metadata): BoxedExpression;
-  tuple(
-    elements: (number | BoxedExpression)[],
-    metadata?: Metadata
-  ): BoxedExpression {
+  tuple(...elements: ReadonlyArray<number>): BoxedExpression;
+  tuple(...elements: ReadonlyArray<BoxedExpression>): BoxedExpression;
+  tuple(...elements: ReadonlyArray<number | BoxedExpression>): BoxedExpression {
     // Short path
     return new BoxedFunction(
       this,
       'Tuple',
-      canonical(
-        elements.map((x) =>
-          typeof x === 'number' ? this.number(x) : x.canonical
-        )
+      elements.map((x) =>
+        typeof x === 'number' ? this.number(x) : x.canonical
       ),
-      {
-        metadata,
-        canonical: true,
-      }
+      { canonical: true }
     );
-  }
-
-  array(
-    elements: ArrayValue[] | ArrayValue[][],
-    metadata?: Metadata
-  ): BoxedExpression {
-    // @todo
-    // return new BoxedFunction(this, 'List', canonical(elements), {
-    //   metadata,
-    //   canonical: true,
-    // });
-    return this.Nothing;
   }
 
   string(s: string, metadata?: Metadata): BoxedExpression {
@@ -2265,37 +1926,31 @@ export class ComputeEngine implements IComputeEngine {
       | Decimal
       | Complex
       | Rational,
-    options?: { metadata?: Metadata; canonical?: CanonicalOptions }
+    options?: { metadata: Metadata; canonical: CanonicalOptions }
   ): BoxedExpression {
-    options = options ? { ...options } : {};
-    if (!('canonical' in options)) options.canonical = true;
-    if (options.canonical === 'Number') options.canonical = true;
-    if (
-      Array.isArray(options.canonical) &&
-      options.canonical.includes('Number')
-    )
-      options.canonical = true;
-
+    const metadata = options?.metadata;
     //
     // Is this number eligible to be a cached number expression?
     // (i.e. it has no associated metadata)
     //
-    if (options.metadata === undefined) {
+    if (metadata === undefined) {
       if (typeof value === 'bigint') {
         if (value === BigInt(1)) return this.One;
         if (value === BigInt(0)) return this.Zero;
         if (value === BigInt(-1)) return this.NegativeOne;
+        if (value === BigInt(2)) return this.Two;
       }
       if (typeof value === 'number') {
         const n = value;
         if (n === 1) return this.One;
         if (n === 0) return this.Zero;
         if (n === -1) return this.NegativeOne;
+        if (n === 2) return this.Two;
 
         if (Number.isInteger(n) && this._commonNumbers[n] !== undefined) {
-          if (this._commonNumbers[n] === null)
-            this._commonNumbers[n] = boxNumber(this, value) ?? this.NaN;
-          return this._commonNumbers[n]!;
+          this._commonNumbers[n] ??=
+            boxNumber(this, value, { canonical: true }) ?? this.NaN;
+          return this._commonNumbers[n];
         }
 
         if (Number.isNaN(n)) return this.NaN;
@@ -2305,14 +1960,17 @@ export class ComputeEngine implements IComputeEngine {
       }
     }
 
-    if (typeof value === 'bigint') value = this.bignum(value);
+    let canonical = false;
+    if (!options || options.canonical === undefined) canonical = true;
+    else if (options.canonical === 'Number' || options.canonical === true)
+      canonical = true;
+    else if (
+      Array.isArray(options.canonical) &&
+      options.canonical.includes('Number')
+    )
+      canonical = true;
 
-    return (
-      boxNumber(this, value, {
-        metadata: options.metadata,
-        canonical: options.canonical === true,
-      }) ?? this.NaN
-    );
+    return boxNumber(this, value, { metadata, canonical }) ?? this.NaN;
   }
 
   rules(rules: Rule[]): BoxedRuleSet {
@@ -2344,7 +2002,7 @@ export class ComputeEngine implements IComputeEngine {
    * Return a function expression, but the caller is responsible for making
    * sure that the arguments are canonical.
    *
-   * Unlike ce.function(), the head of the  result is the head argument.
+   * Unlike ce.function(), the operator of the  result is the name argument.
    * Calling this function directly is potentially unsafe, as it bypasses
    * the canonicalization of the arguments.
    *
@@ -2355,12 +2013,12 @@ export class ComputeEngine implements IComputeEngine {
    *
    * @internal */
   _fn(
-    head: string | BoxedExpression,
+    name: MathJsonIdentifier,
     ops: BoxedExpression[],
     options?: Metadata & { canonical?: boolean }
   ): BoxedExpression {
     const canonical = options?.canonical ?? true;
-    return new BoxedFunction(this, head, ops, { ...options, canonical });
+    return new BoxedFunction(this, name, ops, { ...options, canonical });
   }
 
   /**
@@ -2414,7 +2072,7 @@ export class ComputeEngine implements IComputeEngine {
         // if (def?.domain) return 'symbol';
         return 'symbol';
       },
-      parseUnexpectedToken: (lhs, parser) => null,
+      parseUnexpectedToken: (_lhs, _parser) => null,
       preserveLatex: false,
     };
 
@@ -2423,7 +2081,7 @@ export class ComputeEngine implements IComputeEngine {
       this.indexedLatexDictionary,
       { ...defaultOptions, ...options }
     );
-    if (!result) throw Error('Failed to parse LaTeX string');
+    if (result === null) throw Error('Failed to parse LaTeX string');
     return this.box(result, { canonical: options?.canonical ?? true });
   }
 

@@ -1,7 +1,7 @@
 import Complex from 'complex.js';
 import { Decimal } from 'decimal.js';
 
-import { Expression } from '../../math-json/math-json-format';
+import { Expression, MathJsonIdentifier } from '../../math-json/types';
 
 import { LatexString } from '../public';
 import { Rational } from '../numerics/rationals';
@@ -48,7 +48,13 @@ import { AsciiMathOptions, toAsciiMath } from './ascii-math';
 export abstract class _BoxedExpression implements BoxedExpression {
   abstract readonly hash: number;
   abstract readonly json: Expression;
-  abstract readonly head: BoxedExpression | string;
+  abstract readonly operator: string;
+
+  /** @deprecated */
+  get head(): string {
+    return this.operator;
+  }
+
   abstract get isCanonical(): boolean;
   abstract set isCanonical(_val: boolean);
 
@@ -83,7 +89,7 @@ export abstract class _BoxedExpression implements BoxedExpression {
    * Primitive values are: boolean, number, bigint, string, null, undefined
    *
    */
-  valueOf(): number | Object | string | boolean {
+  valueOf(): number | object | string | boolean {
     if (this.symbol === 'True') return true;
     if (this.symbol === 'False') return false;
     if (this.symbol === 'NaN') return NaN;
@@ -133,7 +139,7 @@ export abstract class _BoxedExpression implements BoxedExpression {
   ): Expression {
     const defaultOptions: JsonSerializationOptions = {
       exclude: [],
-      shorthands: ['function', 'symbol', 'string', 'dictionary', 'number'],
+      shorthands: ['function', 'symbol', 'string', 'number'],
       metadata: [],
       fractionalDigits: 'max',
       repeatingDecimal: true,
@@ -146,13 +152,7 @@ export abstract class _BoxedExpression implements BoxedExpression {
           options.shorthands === 'all') ||
         options.shorthands?.includes('all')
       ) {
-        defaultOptions.shorthands = [
-          'function',
-          'symbol',
-          'string',
-          'dictionary',
-          'number',
-        ];
+        defaultOptions.shorthands = ['function', 'symbol', 'string', 'number'];
       }
       if (
         (typeof options.metadata === 'string' && options.metadata === 'all') ||
@@ -253,6 +253,10 @@ export abstract class _BoxedExpression implements BoxedExpression {
     );
   }
 
+  toNumericValue(): [NumericValue, BoxedExpression] {
+    return [this.engine._numericValue(1), this];
+  }
+
   get scope(): RuntimeScope | null {
     return null;
   }
@@ -283,8 +287,10 @@ export abstract class _BoxedExpression implements BoxedExpression {
     return null;
   }
 
-  getSubexpressions(head: string): ReadonlyArray<BoxedExpression> {
-    return getSubexpressions(this, head);
+  getSubexpressions(
+    operator: MathJsonIdentifier
+  ): ReadonlyArray<BoxedExpression> {
+    return getSubexpressions(this, operator);
   }
 
   get subexpressions(): ReadonlyArray<BoxedExpression> {
@@ -339,10 +345,6 @@ export abstract class _BoxedExpression implements BoxedExpression {
   }
 
   get isPure(): boolean {
-    return false;
-  }
-
-  get isExact(): boolean {
     return false;
   }
 
@@ -406,35 +408,44 @@ export abstract class _BoxedExpression implements BoxedExpression {
   neg(): BoxedExpression {
     return this.engine.NaN;
   }
+
   inv(): BoxedExpression {
     return this.engine.NaN;
   }
+
   abs(): BoxedExpression {
     return this.engine.NaN;
   }
-  add(...rhs: (number | BoxedExpression)[]): BoxedExpression {
+
+  add(rhs: number | BoxedExpression): BoxedExpression {
     return this.engine.NaN;
   }
+
   sub(rhs: BoxedExpression): BoxedExpression {
+    return this.add(rhs.neg());
+  }
+
+  mul(rhs: NumericValue | number | BoxedExpression): BoxedExpression {
     return this.engine.NaN;
   }
-  mul(...rhs: (number | BoxedExpression)[]): BoxedExpression {
+
+  div(rhs: number | BoxedExpression): BoxedExpression {
     return this.engine.NaN;
   }
-  div(rhs: BoxedExpression): BoxedExpression {
+
+  pow(
+    exp: number | [num: number, denom: number] | BoxedExpression
+  ): BoxedExpression {
     return this.engine.NaN;
   }
-  pow(exp: number | BoxedExpression): BoxedExpression {
-    return this.engine.NaN;
-  }
+
   sqrt(): BoxedExpression {
     return this.engine.NaN;
   }
-  // root(exp: number | BoxedExpression): BoxedExpression {
-  //   return this.engine.NaN;
-  // }
-  // log(base?: SemiBoxedExpression): BoxedExpression;
-  // exp(): BoxedExpression;
+
+  ln(base?: SemiBoxedExpression): BoxedExpression {
+    return this.engine.NaN;
+  }
 
   get sgn(): -1 | 0 | 1 | undefined | null {
     return null;
@@ -465,20 +476,16 @@ export abstract class _BoxedExpression implements BoxedExpression {
     if (!recursive)
       return fn(
         this.engine.function(
-          this.head,
+          this.operator,
           this.ops.map((x) => fn(x)),
-          {
-            canonical,
-          }
+          { canonical }
         )
       );
     return fn(
       this.engine.function(
-        this.head,
+        this.operator,
         this.ops.map((x) => x.map(fn, options)),
-        {
-          canonical,
-        }
+        { canonical }
       )
     );
   }
@@ -595,19 +602,6 @@ export abstract class _BoxedExpression implements BoxedExpression {
     return;
   }
 
-  get keys(): IterableIterator<string> | null {
-    return null;
-  }
-  get keysCount() {
-    return 0;
-  }
-  getKey(_key: string): BoxedExpression | undefined {
-    return undefined;
-  }
-  hasKey(_key: string): boolean {
-    return false;
-  }
-
   get value(): number | boolean | string | object | undefined {
     return this.N().valueOf();
   }
@@ -702,7 +696,7 @@ export abstract class _BoxedExpression implements BoxedExpression {
 function getFreeVariables(expr: BoxedExpression, result: Set<string>): void {
   // @todo: need to check for '["Block"]' which may contain ["Declare"] expressions and exclude those
 
-  if (expr.head === 'Block') {
+  if (expr.operator === 'Block') {
   }
 
   if (expr.symbol) {
@@ -716,13 +710,7 @@ function getFreeVariables(expr: BoxedExpression, result: Set<string>): void {
     return;
   }
 
-  if (expr.head && typeof expr.head !== 'string')
-    getFreeVariables(expr.head, result);
-
   if (expr.ops) for (const op of expr.ops) getFreeVariables(op, result);
-
-  if (expr.keys)
-    for (const key of expr.keys) getFreeVariables(expr.getKey(key)!, result);
 }
 
 function getSymbols(expr: BoxedExpression, result: Set<string>): void {
@@ -731,12 +719,7 @@ function getSymbols(expr: BoxedExpression, result: Set<string>): void {
     return;
   }
 
-  if (expr.head && typeof expr.head !== 'string') getSymbols(expr.head, result);
-
   if (expr.ops) for (const op of expr.ops) getSymbols(op, result);
-
-  if (expr.keys)
-    for (const key of expr.keys) getSymbols(expr.getKey(key)!, result);
 }
 
 /**
@@ -761,25 +744,16 @@ function getUnknowns(expr: BoxedExpression, result: Set<string>): void {
     return;
   }
 
-  if (expr.head && typeof expr.head !== 'string')
-    getUnknowns(expr.head, result);
-
   if (expr.ops) for (const op of expr.ops) getUnknowns(op, result);
-
-  if (expr.keys)
-    for (const key of expr.keys) getUnknowns(expr.getKey(key)!, result);
 }
 
 export function getSubexpressions(
   expr: BoxedExpression,
-  head: string
+  name: MathJsonIdentifier
 ): ReadonlyArray<BoxedExpression> {
-  const result = !head || expr.head === head ? [expr] : [];
+  const result = !name || expr.operator === name ? [expr] : [];
   if (expr.ops) {
-    for (const op of expr.ops) result.push(...getSubexpressions(op, head));
-  } else if (expr.keys) {
-    for (const op of expr.keys)
-      result.push(...getSubexpressions(expr.getKey(op)!, head));
+    for (const op of expr.ops) result.push(...getSubexpressions(op, name));
   }
   return result;
 }
@@ -788,3 +762,4 @@ export function getSubexpressions(
 // function *after* the class definition
 
 import { serializeJson } from './serialize';
+import { NumericValue } from '../numeric-value/public';

@@ -1,6 +1,6 @@
 import Complex from 'complex.js';
 import { Decimal } from 'decimal.js';
-import { Expression } from '../../math-json/math-json-format';
+import { Expression } from '../../math-json/types';
 import { _BoxedExpression } from './abstract-boxed-expression';
 import {
   BoxedExpression,
@@ -24,7 +24,6 @@ import {
   CanonicalOptions,
 } from './public';
 import { replace } from '../rules';
-import { isValidIdentifier, validateIdentifier } from '../../math-json/utils';
 import { hashCode, normalizedUnknownsForSolve } from './utils';
 import { _BoxedSymbolDefinition } from './boxed-symbol-definition';
 import { _BoxedFunctionDefinition } from './boxed-function-definition';
@@ -32,10 +31,15 @@ import { narrow } from './boxed-domain';
 import { domainToSignature, signatureToDomain } from '../domain-utils';
 import { match } from './match';
 import { canonicalDivide } from '../library/arithmetic-divide';
-import { canonicalPower } from '../library/arithmetic-power';
-import { Terms } from '../numerics/terms';
 import { negate } from '../symbolic/negate';
-import { Product } from '../symbolic/product';
+import { mul } from '../library/arithmetic-multiply';
+import { asFloat } from './numerics';
+import { NumericValue } from '../numeric-value/public';
+import {
+  isValidIdentifier,
+  validateIdentifier,
+} from '../../math-json/identifiers';
+import { add } from '../numerics/terms';
 
 /**
  * BoxedSymbol
@@ -174,12 +178,27 @@ export class BoxedSymbol extends _BoxedExpression {
     return this.engine.box(this._id);
   }
 
+  toNumericValue(): [NumericValue, BoxedExpression] {
+    console.assert(this.isCanonical);
+    const ce = this.engine;
+
+    if (this.symbol === 'ImaginaryUnit')
+      return [ce._numericValue({ re: 0, im: 1 }), ce.One];
+    if (this.symbol === 'PositiveInfinity')
+      return [ce._numericValue(Infinity), ce.One];
+    if (this.symbol === 'NegativeInfinity')
+      return [ce._numericValue(-Infinity), ce.One];
+    if (this.symbol === 'NaN') return [ce._numericValue(NaN), ce.One];
+
+    return [ce._numericValue(1), this];
+  }
+
   neg(): BoxedExpression {
     return negate(this);
   }
 
   inv(): BoxedExpression {
-    return this.engine.One.div(this);
+    return this.engine._fn('Divide', [this.engine.One, this]);
   }
 
   abs(): BoxedExpression {
@@ -188,44 +207,70 @@ export class BoxedSymbol extends _BoxedExpression {
     return this.engine._fn('Abs', [this]);
   }
 
-  add(...rhs: (number | BoxedExpression)[]): BoxedExpression {
-    if (rhs.length === 0) return this;
+  add(rhs: number | BoxedExpression): BoxedExpression {
+    return add(this.canonical, this.engine.box(rhs));
+  }
+
+  mul(rhs: NumericValue | number | BoxedExpression): BoxedExpression {
+    if (rhs === 1) return this;
+    if (rhs === -1) return this.neg();
+    if (rhs === 0) return this.engine.Zero;
+    if (rhs instanceof NumericValue) {
+      if (rhs.isOne) return this;
+      if (rhs.isNegativeOne) return this.neg();
+      if (rhs.isZero) return this.engine.Zero;
+    }
+    return mul(this.canonical, this.engine.box(rhs));
+  }
+
+  div(rhs: number | BoxedExpression): BoxedExpression {
+    return canonicalDivide(this, this.engine.box(rhs));
+  }
+
+  pow(
+    exp: number | [num: number, denom: number] | BoxedExpression
+  ): BoxedExpression {
     const ce = this.engine;
+    if (this.symbol === 'ComplexInfinity') return ce.NaN;
 
-    return new Terms(ce, [
-      this,
-      ...rhs.map((x) => (typeof x === 'number' ? ce.number(x) : x)),
-    ]).asExpression();
-  }
+    if (exp === 0) return this.engine.One;
+    if (exp === 1) return this;
+    if (exp === -1) return this.inv();
+    if (exp === 0.5) exp = [1, 2];
+    if (exp === -0.5) exp = [-1, 2];
 
-  sub(rhs: BoxedExpression): BoxedExpression {
-    return this.add(rhs.neg());
-  }
+    if (!this.isCanonical) return this.canonical.pow(exp);
 
-  mul(...rhs: (number | BoxedExpression)[]): BoxedExpression {
-    if (rhs.length === 0) return this;
+    if (typeof exp !== 'number') {
+      exp = ce.box(exp); // Canonicalize and box fractions
+      if (exp.isZero) return this.engine.One;
+      if (exp.isOne) return this;
+      if (exp.isNegativeOne) return this.inv();
+      if (exp.operator === 'Negate') return this.pow(exp.op1).inv();
+    }
 
-    const ce = this.engine;
-
-    return new Product(ce, [
-      this,
-      ...rhs.map((x) => (typeof x === 'number' ? ce.number(x) : x)),
-    ]).asExpression();
-  }
-
-  div(rhs: BoxedExpression): BoxedExpression {
-    return canonicalDivide(this, rhs);
-  }
-
-  pow(exp: number | BoxedExpression): BoxedExpression {
-    return canonicalPower(
-      this,
-      typeof exp === 'number' ? this.engine.number(exp) : exp
-    );
+    return ce._fn('Power', [this, ce.box(exp)]);
   }
 
   sqrt(): BoxedExpression {
-    return canonicalPower(this, this.engine.Half);
+    return this.pow([1, 2]);
+  }
+
+  ln(semiBase?: SemiBoxedExpression): BoxedExpression {
+    const base = semiBase ? this.engine.box(semiBase) : undefined;
+    if (!this.isCanonical) return this.canonical.ln(base);
+    if (
+      (!base || base.symbol === 'ExponentialE') &&
+      this.symbol === 'ExponentialE'
+    )
+      return this.engine.One;
+
+    if (base) {
+      if (asFloat(base) === 10) return this.engine._fn('Log', [this]);
+      return this.engine._fn('Log', [this, base]);
+    }
+
+    return this.engine._fn('Ln', [this]);
   }
 
   solve(
@@ -245,7 +290,7 @@ export class BoxedSymbol extends _BoxedExpression {
     return 7;
   }
 
-  get head(): string {
+  get operator(): string {
     return 'Symbol';
   }
 
@@ -660,7 +705,7 @@ export class BoxedSymbol extends _BoxedExpression {
 
     // By default, there is no simplification of symbols,
     // however if a custom set of rules is provided, apply them
-    return options?.rules ? this.replace(options.rules) ?? this : this;
+    return options?.rules ? (this.replace(options.rules) ?? this) : this;
   }
 
   evaluate(options?: EvaluateOptions): BoxedExpression {

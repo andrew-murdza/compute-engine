@@ -1,4 +1,4 @@
-import { Expression } from '../../../math-json/math-json-format';
+import { Expression } from '../../../math-json/types';
 import { countTokens, joinLatex, tokenize, tokensToString } from '../tokenizer';
 import { DEFINITIONS_ALGEBRA } from './definitions-algebra';
 import { DEFINITIONS_ARITHMETIC } from './definitions-arithmetic';
@@ -13,13 +13,12 @@ import { DEFINITIONS_CALCULUS } from './definitions-calculus';
 import { DEFINITIONS_SYMBOLS } from './definitions-symbols';
 import {
   foldAssociativeOperator,
-  head,
+  operator,
   isEmptySequence,
-  isValidIdentifier,
   missingIfEmpty,
   nops,
-  op,
-  ops,
+  operand,
+  operands,
 } from '../../../math-json/utils';
 import { ErrorSignal, WarningSignal } from '../../../common/signals';
 import { DEFINITIONS_COMPLEX } from './definitions-complex';
@@ -48,6 +47,7 @@ import {
   isPrefixEntry,
   isSymbolEntry,
 } from '../public';
+import { isValidIdentifier } from '../../../math-json/identifiers';
 
 export type CommonEntry = {
   /** Note: a name is required if a serialize handler is provided */
@@ -449,7 +449,7 @@ function makeSerializeHandler(
     return (serializer, expr) =>
       joinLatex([
         `\\begin{${envName}}`,
-        serializer.serialize(op(expr, 1)),
+        serializer.serialize(operand(expr, 1)),
         `\\end{${envName}}`,
       ]);
   }
@@ -466,7 +466,11 @@ function makeSerializeHandler(
         : tokensToString(entry.closeTrigger);
 
     return (serializer, expr) =>
-      joinLatex([openDelim, serializer.serialize(op(expr, 1)), closeDelim]);
+      joinLatex([
+        openDelim,
+        serializer.serialize(operand(expr, 1)),
+        closeDelim,
+      ]);
   }
 
   let latex = entry.serialize;
@@ -478,11 +482,11 @@ function makeSerializeHandler(
   if (latex) {
     if (kind === 'postfix')
       return (serializer, expr) =>
-        joinLatex([serializer.serialize(op(expr, 1)), latex!]);
+        joinLatex([serializer.serialize(operand(expr, 1)), latex!]);
 
     if (kind === 'prefix')
       return (serializer, expr) =>
-        joinLatex([latex!, serializer.serialize(op(expr, 1))]);
+        joinLatex([latex!, serializer.serialize(operand(expr, 1))]);
 
     if (kind === 'infix') {
       return (serializer, expr) => {
@@ -491,7 +495,7 @@ function makeSerializeHandler(
         const prec = entry['precedence'] ?? 10000;
         // Insert the operator (latex) between each argument
         return joinLatex(
-          ops(expr)!.flatMap((val, i) => {
+          operands(expr).flatMap((val, i) => {
             const arg = serializer.wrap(val, prec + 1);
             return i < n - 1 ? [arg, latex!] : [arg];
           })
@@ -504,7 +508,9 @@ function makeSerializeHandler(
     // of the expression). However, by the time this serializer is called,
     // `expr` is either a symbol or a function expression.
     return (serializer, expr) =>
-      head(expr) ? joinLatex([latex!, serializer.wrapArguments(expr)]) : latex!;
+      operator(expr)
+        ? joinLatex([latex!, serializer.wrapArguments(expr)])
+        : latex!;
   }
 
   //
@@ -514,7 +520,7 @@ function makeSerializeHandler(
   if (kind === 'postfix')
     return (serializer, expr) =>
       joinLatex([
-        serializer.serialize(op(expr, 1)),
+        serializer.serialize(operand(expr, 1)),
         serializer.serializeSymbol(id),
       ]);
 
@@ -522,15 +528,15 @@ function makeSerializeHandler(
     return (serializer, expr) =>
       joinLatex([
         serializer.serializeSymbol(id),
-        serializer.serialize(op(expr, 1)),
+        serializer.serialize(operand(expr, 1)),
       ]);
 
   if (kind === 'infix')
     return (serializer, expr) =>
       joinLatex([
-        serializer.serialize(op(expr, 1)),
+        serializer.serialize(operand(expr, 1)),
         serializer.serializeSymbol(id),
-        serializer.serialize(op(expr, 2)),
+        serializer.serialize(operand(expr, 2)),
       ]);
 
   // Function, symbol or expression. Depends on the actual shape of the
@@ -538,7 +544,7 @@ function makeSerializeHandler(
   // of the expression). However, by the time this serializer is called,
   // `expr` is either a symbol or a function expression.
   return (serializer, expr) =>
-    head(expr)
+    operator(expr)
       ? joinLatex([
           serializer.serializeSymbol(id),
           serializer.wrapArguments(expr),
@@ -554,7 +560,7 @@ function makeParseHandler(
   // If there is a custom parser function, always use it.
   if ('parse' in entry && typeof entry.parse === 'function') return entry.parse;
 
-  const kind = 'kind' in entry ? entry.kind : 'expression' ?? 'expression';
+  const kind = ('kind' in entry ? entry.kind : 'expression') ?? 'expression';
 
   // If there is a parse handler as an Expression , use the
   // expression, but depending on the kind of the entry
@@ -628,8 +634,8 @@ function makeParseHandler(
       const h = entry.name ?? entry.parse;
       return (_parser, arg) => [
         h,
-        missingIfEmpty(op(arg, 1)),
-        missingIfEmpty(op(arg, 2)),
+        missingIfEmpty(operand(arg, 1)),
+        missingIfEmpty(operand(arg, 2)),
       ];
     }
     const h = entry.parse ?? entry.name ?? idTrigger;

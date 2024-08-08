@@ -1,13 +1,13 @@
 import {
-  head,
+  operator,
   isEmptySequence,
   nops,
-  op,
-  ops,
+  operand,
+  operands,
   stringValue,
 } from '../../../math-json/utils';
 import { joinLatex } from '../tokenizer';
-import { Expression } from '../../../math-json/math-json-format';
+import { Expression } from '../../../math-json/types';
 import {
   LatexDictionary,
   Serializer,
@@ -162,16 +162,21 @@ export const DEFINITIONS_SETS: LatexDictionary = [
     // @todo: the set syntax can also include conditions...
     parse: (_parser: Parser, body: Expression): Expression => {
       if (body === null || isEmptySequence(body)) return 'EmptySet';
-      if (head(body) == 'Delimiter' && stringValue(op(body, 2)) === ',') {
-        body = op(body, 1)!;
+      if (
+        operator(body) == 'Delimiter' &&
+        stringValue(operand(body, 2)) === ','
+      ) {
+        body = operand(body, 1)!;
       }
-      if (head(body) !== 'Sequence') return ['Set', body];
-      return ['Set', ...(ops(body) ?? [])];
+      if (operator(body) !== 'Sequence') return ['Set', body];
+      return ['Set', ...operands(body)];
     },
     serialize: (serializer: Serializer, expr: Expression): string => {
       return joinLatex([
         '\\lbrace',
-        (ops(expr) ?? []).map((x) => serializer.serialize(x)).join(', '),
+        operands(expr)
+          .map((x) => serializer.serialize(x))
+          .join(', '),
         '\\rbrace',
       ]);
     },
@@ -351,8 +356,8 @@ function serializeSet(
   expr: Expression | null
 ): LatexString {
   if (expr === null) return '';
-  const h = head(expr);
-  if (h === null) return '';
+  const h = operator(expr);
+  if (!h) return '';
 
   //
   // `Set`
@@ -363,12 +368,12 @@ function serializeSet(
     //
     // 1/ First variant: ["Set", <set | predicate>, ["Condition"]]
     //
-    if (nops(expr) === 2 && head(op(expr, 2)) === 'Condition') {
+    if (nops(expr) === 2 && operator(operand(expr, 2)) === 'Condition') {
       return joinLatex([
         '\\left\\lbrace',
-        serializer.serialize(op(expr, 1)),
+        serializer.serialize(operand(expr, 1)),
         '\\middle\\mid',
-        serializer.serialize(op(expr, 2)),
+        serializer.serialize(operand(expr, 2)),
         '\\right\\rbrace',
       ]);
     }
@@ -378,7 +383,7 @@ function serializeSet(
     //
     return joinLatex([
       '\\left\\lbrace',
-      ...(ops(expr) ?? []).map((x) => serializer.serialize(x) + ' ,'),
+      ...operands(expr).map((x) => serializer.serialize(x) + ' ,'),
       '\\right\\rbrace',
     ]);
   }
@@ -396,9 +401,9 @@ function serializeSet(
   if (h === 'Range') {
     return joinLatex([
       '\\mathopen\\lbrack',
-      serializer.serialize(op(expr, 1)),
+      serializer.serialize(operand(expr, 1)),
       ', ',
-      serializer.serialize(op(expr, 2)),
+      serializer.serialize(operand(expr, 2)),
       '\\mathclose\\rbrack',
     ]);
   }
@@ -406,16 +411,16 @@ function serializeSet(
   // `Range`
   //
   if (h === 'Interval') {
-    let op1 = op(expr, 1);
-    let op2 = op(expr, 2);
+    let op1 = operand(expr, 1);
+    let op2 = operand(expr, 2);
     let openLeft = false;
     let openRight = false;
-    if (head(op1) === 'Open') {
-      op1 = op(op1, 1);
+    if (operator(op1) === 'Open') {
+      op1 = operand(op1, 1);
       openLeft = true;
     }
-    if (head(op2) === 'Open') {
-      op2 = op(op2, 1);
+    if (operator(op2) === 'Open') {
+      op2 = operand(op2, 1);
       openRight = true;
     }
     return joinLatex([

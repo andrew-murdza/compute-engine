@@ -1,16 +1,14 @@
-import type { Expression } from '../../math-json/math-json-format';
+import type { Expression } from '../../math-json/types';
 import {
   nops,
   dictionary,
   stringValue,
-  head,
-  headName,
+  operator,
   symbol,
   isNumberObject,
   isSymbolObject,
-  ops,
+  operands,
   isNumberExpression,
-  ONLY_EMOJIS,
   machineValue,
 } from '../../math-json/utils';
 
@@ -30,6 +28,7 @@ import { countTokens, joinLatex, supsub } from './tokenizer';
 import { serializeNumber } from './serialize-number';
 import { SYMBOLS } from './dictionary/definitions-symbols';
 import { DELIMITERS_SHORTHAND } from './dictionary/definitions-core';
+import { EMOJIS } from '../../math-json/identifiers';
 
 const ACCENT_MODIFIERS = {
   deg: (s: string) => `${s}\\degree`,
@@ -101,12 +100,8 @@ export class Serializer {
         return this.wrap(expr);
       return this.serialize(expr);
     }
-    const name = head(expr);
-    if (
-      typeof name === 'string' &&
-      name !== 'Delimiter' &&
-      name !== 'Subscript'
-    ) {
+    const name = operator(expr);
+    if (name && name !== 'Delimiter' && name !== 'Subscript') {
       const def = this.dictionary.ids.get(name);
       if (
         def &&
@@ -137,14 +132,14 @@ export class Serializer {
     const exprStr = this.serialize(expr);
 
     if (symbol(expr) !== null) return exprStr;
-    // If the default Delimiter (i.e. using parens), don't wrap
-    if (head(expr) === 'Delimiter' && nops(expr) === 1) return exprStr;
 
     const isNum = isNumberExpression(expr);
     // It's not a negative number, or a decimal number
     if (isNum && !/^(-|\.)/.test(exprStr)) return exprStr;
 
-    const h = head(expr);
+    // If the default Delimiter (i.e. using parens), don't wrap
+    const h = operator(expr);
+    if (h === 'Delimiter' && nops(expr) === 1) return exprStr;
     if (
       h !== 'Add' &&
       h !== 'Negate' &&
@@ -192,7 +187,9 @@ export class Serializer {
 
   wrapArguments(expr: Expression): string {
     return this.wrapString(
-      (ops(expr) ?? []).map((x) => this.serialize(x)).join(', '),
+      operands(expr)
+        .map((x) => this.serialize(x))
+        .join(', '),
       this.options.applyFunctionStyle(expr, this.level)
     );
   }
@@ -225,55 +222,8 @@ export class Serializer {
     // It's a function without a serializer.
     // It may have come from `getIdentifierType()`
     // Serialize the arguments as function arguments
-    const h = head(expr);
-    if (typeof h === 'string')
-      return serializeIdentifier(h, 'auto') + this.wrapArguments(expr);
-
-    //
-    // It's a function with a head expression. Use an `apply()`
-    // See https://en.wikipedia.org/wiki/Apply
-    //
-
-    if (head(h) === 'InverseFunction' || head(h) === 'Derivative') {
-      // For inverse functions and derivatives display as a regular function,
-      // e.g. \sin^{-1} x, f'(x) instead of x \rhd f' and x \rhd \sin^{-1}
-
-      return (
-        this.serializeFunction(h!, this.dictionary.ids.get(head(h) as string)) +
-        this.wrapArguments(expr)
-      );
-    }
-
-    const args = ops(expr) ?? [];
-    if (args.length === 1) {
-      // If there's a single argument, we can use the pipeline operator
-      // (i.e. `\rhd` `|>`)
-      return joinLatex([
-        this.serialize(args[0]),
-        '\\rhd',
-        this.wrapString(
-          this.serialize(h),
-          this.options.applyFunctionStyle(expr, this.level)
-        ),
-      ]);
-    }
-
-    const style = this.options.applyFunctionStyle(expr, this.level);
-    return joinLatex([
-      '\\operatorname{apply}',
-      this.wrapString(
-        this.serialize(h) + ', ' + this.serialize(['List', ...args]),
-        style
-      ),
-    ]);
-  }
-
-  serializeDictionary(dict: { [key: string]: Expression }): string {
-    return `\\left\\lbrack\\begin{array}{lll}${Object.keys(dict)
-      .map((x) => {
-        return `\\textbf{${x}} & \\rightarrow & ${this.serialize(dict[x])}`;
-      })
-      .join('\\\\')}\\end{array}\\right\\rbrack`;
+    const h = operator(expr);
+    return serializeIdentifier(h, 'auto') + this.wrapArguments(expr);
   }
 
   serialize(expr: Expression | null): LatexString {
@@ -295,13 +245,7 @@ export class Serializer {
         if (s !== null) return `\\text{${s}}`;
 
         //
-        // 3. Is it a dictionary?
-        //
-        const dict = dictionary(expr);
-        if (dict !== null) return this.serializeDictionary(dict);
-
-        //
-        // 4. Is it a symbol?
+        // 3. Is it a symbol?
         //
         const symbolName = symbol(expr);
         if (symbolName !== null) {
@@ -312,22 +256,16 @@ export class Serializer {
         }
 
         //
-        // 5. Is it a named function?
+        // 4. Is it a function?
         //
-        const fnName = headName(expr);
+        const fnName = operator(expr);
         if (fnName) {
           const def = this.dictionary.ids.get(fnName);
           return this.serializeFunction(expr, def);
         }
 
         //
-        // 6/ Is it a function with a head expression?
-        //
-        // For example [['derive', "f"], x]
-        if (head(expr) !== null) return this.serializeFunction(expr);
-
-        //
-        // 7. Unknown expression
+        // 5. Unknown expression
         //
         // This doesn't look like a symbol, or a function,
         // or anything we were expecting.
@@ -609,7 +547,7 @@ function serializeIdentifier(
   if (s === null) return null;
 
   // If the identifier contains emojis, skip the wrapping
-  if (ONLY_EMOJIS.test(s)) return s;
+  if (EMOJIS.test(s)) return s;
 
   // If the identifier starts with one or more underscore,
   // it's a wildcard symbol and always wrapped with \operatorname{...}.

@@ -2,23 +2,25 @@ import { BoxedExpression } from './public';
 import { isRelationalOperator } from './utils';
 import { Product, commonTerms } from '../symbolic/product';
 import { NumericValue } from '../numeric-value/public';
+import { canonicalMultiply } from '../library/arithmetic-multiply';
+import { add } from '../numerics/terms';
 
 /** Combine rational expressions into a single fraction */
 export function together(op: BoxedExpression): BoxedExpression {
   const ce = op.engine;
-  const h = op.head;
+  const h = op.operator;
 
   // Thread over inequality
   if (isRelationalOperator(h)) return ce.function(h, op.ops!.map(together));
 
-  if (h === 'Divide') return ce.div(op.ops![0], op.ops![1]);
+  if (h === 'Divide') return op.ops![0].div(op.ops![1]);
 
   if (h === 'Negate') return together(op.ops![0]).neg();
 
   if (h === 'Add') {
     const [numer, denom] = op.ops!.reduce(
       (acc, x) => {
-        if (x.head === 'Divide') {
+        if (x.operator === 'Divide') {
           acc[0].push(x.ops![0]);
           acc[1].push(x.ops![1]);
         } else acc[0].push(x);
@@ -26,7 +28,7 @@ export function together(op: BoxedExpression): BoxedExpression {
       },
       [[], []] as BoxedExpression[][]
     );
-    return ce.div(ce.add(...numer), ce.add(...denom));
+    return add(...numer).div(add(...denom));
   }
 
   return op;
@@ -39,7 +41,7 @@ export function together(op: BoxedExpression): BoxedExpression {
  * - (2x) * (2y) -> 4xy
  */
 export function factor(expr: BoxedExpression): BoxedExpression {
-  const h = expr.head;
+  const h = expr.operator;
   if (isRelationalOperator(h)) {
     const lhs = Product.from(expr.op1);
     const rhs = Product.from(expr.op2);
@@ -60,7 +62,7 @@ export function factor(expr: BoxedExpression): BoxedExpression {
     // Calculate the GCD of all coefficients
     const terms: { coeff: NumericValue; term: BoxedExpression }[] = [];
     for (const op of expr.ops!) {
-      const [coeff, term] = ce._toNumericValue(op);
+      const [coeff, term] = op.toNumericValue();
       common = common ? common.gcd(coeff) : coeff;
       if (!coeff.isZero) terms.push({ coeff, term });
     }
@@ -68,10 +70,10 @@ export function factor(expr: BoxedExpression): BoxedExpression {
     if (!common || common?.isOne) return expr;
 
     const newTerms = terms.map(({ coeff, term }) =>
-      ce._fromNumericValue(coeff.div(common), term)
+      canonicalMultiply(ce, [term, ce.box(coeff.div(common))])
     );
 
-    return ce._fromNumericValue(common, ce.add(...newTerms));
+    return canonicalMultiply(ce, [ce.box(common), add(...newTerms)]);
   }
 
   return Product.from(together(expr)).asExpression();

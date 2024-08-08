@@ -17,7 +17,7 @@ describe('SOLVING A QUADRATIC EQUATION', () => {
       ?.map((x) => x.json);
     expect(result).toMatchInlineSnapshot(`
       [
-        7.500000265281415e-8,
+        7.4999999971875e-8,
         -200.000000075,
       ]
     `);
@@ -57,7 +57,7 @@ describe('SOLVING A QUADRATIC EQUATION', () => {
     const eqn = ce.box(['Add', ['Multiply', 2, ['Square', 'x']], -16]);
     expect(eqn.solve('x')).toMatchInlineSnapshot(`
       [
-        ["Multiply", 2, ["Sqrt", 2]],
+        ["Sqrt", 8],
       ]
     `);
   });
@@ -100,17 +100,10 @@ describe('expr.solve()', () => {
 
   test('should solve a simple equation with a variable', () => {
     const e = expr('x - 1 + y = 0');
-    const result = e.solve('x')?.map((x) => x.json);
+    const result = e.solve('x')?.map((x) => x.toString());
     expect(result).toMatchInlineSnapshot(`
       [
-        [
-          Add,
-          [
-            Negate,
-            y,
-          ],
-          1,
-        ],
+        -y + 1,
       ]
     `);
   });
@@ -129,36 +122,11 @@ describe('expr.solve()', () => {
 
   test('should solve an equation with a fractional root', () => {
     const e = expr('x^2 + 2x + \\frac{1}{4} = 0');
-    const result = e.solve('x')?.map((x) => x.json);
+    const result = e.solve('x')?.map((x) => x.toString());
     expect(result).toMatchInlineSnapshot(`
       [
-        [
-          Divide,
-          [
-            Add,
-            [
-              Sqrt,
-              3,
-            ],
-            -2,
-          ],
-          2,
-        ],
-        [
-          Divide,
-          [
-            Add,
-            [
-              Negate,
-              [
-                Sqrt,
-                3,
-              ],
-            ],
-            -2,
-          ],
-          2,
-        ],
+        -0.133974596215561353236276829247063816528597373094809685972096510274033491545599981459426906621375712,
+        -1.866025403784438646763723170752936183471402626905190314027903489725966508454400018540573093378624288,
       ]
     `);
   });

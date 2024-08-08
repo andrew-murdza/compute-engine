@@ -1,12 +1,14 @@
-import type { Expression } from '../../math-json/math-json-format';
+import type {
+  Expression,
+  ExpressionObject,
+  MathJsonIdentifier,
+} from '../../math-json/types';
 import {
   getSequence,
-  head,
   missingIfEmpty,
+  operator,
+  operands,
   nops,
-  op1,
-  ops,
-  symbol,
 } from '../../math-json/utils';
 
 import {
@@ -270,7 +272,7 @@ export class _Parser implements Parser {
     this._imaginaryUnitTokens = tokenize(this.options.imaginaryUnit);
   }
 
-  getIdentifierType(id: string): SymbolType {
+  getIdentifierType(id: MathJsonIdentifier): SymbolType {
     // Check if the identifier is in the symbol table
     // (which means it has been encountered as part of the current parsing)
     let table: SymbolTable | null = this.symbolTable;
@@ -487,11 +489,11 @@ export class _Parser implements Parser {
     }
 
     if (!this.options.skipSpace) return false;
-    let result = false;
-    while (this.match('<space>')) result = true;
-    if (result) this.skipSpace();
+    let found = false;
+    while (this.match('<space>')) found = true;
+    if (found) this.skipSpace();
 
-    return result;
+    return found;
   }
 
   skipVisualSpace(): void {
@@ -680,7 +682,7 @@ export class _Parser implements Parser {
       if (this.matchBoundary()) return expr ?? ['Sequence'];
       // Try to find the boundary (or the end)
       while (!this.matchBoundary() && !this.atEnd) this.nextToken();
-      if (head(expr) === 'Error') return expr;
+      if (operator(expr) === 'Error') return expr;
       const err = this.error('expected-closing-delimiter', start);
       return expr ? ['InvisibleOperator', expr, err] : err;
     }
@@ -720,23 +722,9 @@ export class _Parser implements Parser {
 
     // Is it a single digit?
     // Note: `x^23` is `x^{2}3`, not x^{23}
-    if (/^[0-9]$/.test(this.peek)) return parseInt(this.nextToken());
+    if (/^[0-9]$/.test(this.peek)) return parseInt(this.nextToken(), 10);
 
-    // This can be a generic expression or a symbol
-    // Setup the token stream to include only the next token
-    // const start = this.index;
-    // const token = this.peek;
-    // const tokens = this._tokens;
-    // this._tokens = [token];
-    // this.index = 0;
-
-    const result = this.parseGenericExpression() ?? this.parseSymbol();
-
-    // this._tokens = tokens;
-    // this.index = start;
-    if (!result) return null;
-    // this.index += 1;
-    return result;
+    return this.parseGenericExpression() ?? this.parseSymbol();
   }
 
   /**
@@ -786,7 +774,7 @@ export class _Parser implements Parser {
               return peek === '&' || peek === '\\\\' || peek === '\\cr';
             },
           });
-          if (expr) cell.push(expr);
+          if (expr !== null) cell.push(expr);
           else {
             cell.push(['Error', ["'unexpected-token'", peek]]);
             this.nextToken();
@@ -1152,11 +1140,18 @@ export class _Parser implements Parser {
       // The '.' may be part of something else, i.e. '1..2'
       // so backtrack
       this.index = fractionalIndex;
+      if (wholePart.length < 10) return sign * parseInt(wholePart, 10);
       return { num: sign < 0 ? '-' + wholePart : wholePart };
     }
 
     const exponent = this.parseExponent();
 
+    // If we have a small-ish whole number, use a shortcut for the number
+    if (!hasFractionalPart && !exponent && wholePart.length < 10)
+      return sign * parseInt(wholePart, 10);
+
+    // If we prefer to parse numbers as rationals, and there is no repeating part
+    // we can return a rational number
     if (!hasRepeatingPart && this.options.parseNumbers === 'rational') {
       const whole = parseInt(wholePart, 10);
 
@@ -1184,6 +1179,7 @@ export class _Parser implements Parser {
       }
       return ['Rational', sign * numerator, denominator];
     }
+
     return {
       num:
         (sign < 0 ? '-' : '') +
@@ -1287,7 +1283,7 @@ export class _Parser implements Parser {
     for (const [def, n] of this.peekDefinitions('prefix')) {
       this.index = start + n;
       const rhs = def.parse(this, { ...until, minPrec: def.precedence + 1 });
-      if (rhs) return rhs;
+      if (rhs !== null) return rhs;
     }
     this.index = start;
     return null;
@@ -1306,7 +1302,7 @@ export class _Parser implements Parser {
       if (def.precedence >= until.minPrec) {
         this.index = start + n;
         const rhs = def.parse(this, lhs, until);
-        if (rhs) return rhs;
+        if (rhs !== null) return rhs;
       }
     }
     this.index = start;
@@ -1342,12 +1338,13 @@ export class _Parser implements Parser {
     // We are looking for an expression inside an optional pair of `()`
     // (i.e. trig functions, as in `\cos x`.)
     if (kind === 'implicit') {
-      if (head(group) === 'Delimiter') {
-        if (head(op1(group)) === 'Sequence') {
-          const seq = op1(op1(group));
+      if (operator(group) === 'Delimiter') {
+        const op1 = operands(group)[0];
+        if (operator(op1) === 'Sequence') {
+          const seq = operands(op1)[0];
           return seq ? [seq] : [];
         }
-        return op1(group) ? [op1(group)!] : [];
+        return op1 ? [op1] : [];
       }
 
       // Was there a matchfix? the "group" is the argument, i.e.
@@ -1482,7 +1479,7 @@ export class _Parser implements Parser {
     if (fn === null) {
       this.index = start;
       fn = parseIdentifier(this);
-      if (!this.isFunctionHead(fn)) {
+      if (!this.isFunctionOperator(fn)) {
         this.index = start;
         return null;
       }
@@ -1520,7 +1517,7 @@ export class _Parser implements Parser {
       // @todo: should capture symbol, and check it is not in use as a symbol,  function, or inferred (calling getIdentifierType() or somethinglike it (getIdentifierType() may aggressively return 'symbol'...)). Maybe not during parsing, but canonicalization
       if (typeof def.parse === 'function') {
         const result = def.parse(this, until);
-        if (result) return result;
+        if (result !== null) return result;
       } else return def.name!;
     }
 
@@ -1530,13 +1527,7 @@ export class _Parser implements Parser {
     this.index = start;
 
     const id = parseIdentifier(this);
-    if (id === null) return null;
-
-    // Are we OK with it as a symbol?
-    // Note: by the time we call getIdentifierType(), we know it is a valid
-    // identifier
-    const type = this.getIdentifierType(id);
-    if (type === 'symbol') return id;
+    if (id !== null && this.getIdentifierType(id) === 'symbol') return id;
 
     // This was an identifier, but not a valid symbol. Backtrack
     this.index = start;
@@ -1617,7 +1608,7 @@ export class _Parser implements Parser {
           if (typeof def.parse === 'function')
             result = def.parse(this, arg, { minPrec: 0 });
           else result = arg;
-          if (result) break;
+          if (result !== null) break;
         }
       }
     }
@@ -1632,7 +1623,7 @@ export class _Parser implements Parser {
 
       if (defs) {
         const nonEmptySuperscripts = superscripts.filter(
-          (x) => !(head(x) === 'Sequence' && nops(x) === 0)
+          (x) => !(operator(x) === 'Sequence' && nops(x) === 0)
         ) as Expression[];
         if (nonEmptySuperscripts.length !== 0) {
           const superscriptExpression: Expression =
@@ -1648,7 +1639,7 @@ export class _Parser implements Parser {
             if (typeof def.parse === 'function')
               result = def.parse(this, arg, { minPrec: 0 });
             else result = arg;
-            if (result) break;
+            if (result !== null) break;
           }
         }
       }
@@ -1715,7 +1706,7 @@ export class _Parser implements Parser {
         this.index += n;
         if (typeof def.parse === 'function') {
           const result = def.parse(this, this.error('missing', start));
-          if (result) return result;
+          if (result !== null) return result;
         }
         if (def.name) return [def.name, this.error('missing', start)];
         return this.error('unexpected-operator', start);
@@ -1728,7 +1719,7 @@ export class _Parser implements Parser {
         this.index += n;
         if (typeof def.parse === 'function') {
           const result = def.parse(this, { minPrec: 0 });
-          if (result) return result;
+          if (result !== null) return result;
         }
         if (def.name)
           return [
@@ -1746,7 +1737,7 @@ export class _Parser implements Parser {
         const result = def.parse(this, this.error('missing', start), {
           minPrec: 0,
         });
-        if (result) return result;
+        if (result !== null) return result;
         // if (def.name)
         //   return [
         //     def.name,
@@ -1760,9 +1751,10 @@ export class _Parser implements Parser {
     const index = this.index;
 
     let id = parseInvalidIdentifier(this);
-    if (id) return id;
+    if (id !== null) return id;
     id = parseIdentifier(this);
-    if (id) return this.error(['unexpected-identifier', { str: id }], index);
+    if (id !== null)
+      return this.error(['unexpected-identifier', { str: id }], index);
 
     const command = this.peek;
     if (!command) return this.error('syntax-error', start);
@@ -1972,13 +1964,13 @@ export class _Parser implements Parser {
       // If we got an empty sequence, ignore it.
       // This is returned by some purely presentational commands,
       // for example `\displaystyle`
-      if (head(lhs) === 'Sequence' && nops(lhs) === 0) lhs = null;
+      if (operator(lhs) === 'Sequence' && nops(lhs) === 0) lhs = null;
     }
 
     //
     // 3. Are there some infix operators?
     //
-    if (lhs) {
+    if (lhs !== null) {
       let done = false;
       while (!done && !this.atTerminator(until)) {
         this.skipSpace();
@@ -1993,12 +1985,16 @@ export class _Parser implements Parser {
               minPrec: MULTIPLICATION_PRECEDENCE,
             });
             if (rhs !== null) {
-              if (head(lhs) === 'InvisibleOperator') {
-                if (head(rhs) === 'InvisibleOperator')
-                  result = ['InvisibleOperator', ...ops(lhs)!, ...ops(rhs)!];
-                else result = ['InvisibleOperator', ...ops(lhs)!, rhs];
-              } else if (head(rhs) === 'InvisibleOperator') {
-                result = ['InvisibleOperator', lhs, ...ops(rhs)!];
+              if (operator(lhs) === 'InvisibleOperator') {
+                if (operator(rhs) === 'InvisibleOperator')
+                  result = [
+                    'InvisibleOperator',
+                    ...operands(lhs),
+                    ...operands(rhs),
+                  ];
+                else result = ['InvisibleOperator', ...operands(lhs), rhs];
+              } else if (operator(rhs) === 'InvisibleOperator') {
+                result = ['InvisibleOperator', lhs, ...operands(rhs)];
               } else result = ['InvisibleOperator', lhs, rhs];
             } else {
               if (result === null) {
@@ -2028,14 +2024,15 @@ export class _Parser implements Parser {
     if (!this.options.preserveLatex) return expr;
 
     const latex = this.latex(start, this.index);
+
     if (Array.isArray(expr)) {
-      expr = { latex, fn: expr };
+      expr = { latex, fn: expr } as Expression;
     } else if (typeof expr === 'number') {
       expr = { latex, num: Number(expr).toString() };
     } else if (typeof expr === 'string') {
       expr = { latex, sym: expr };
     } else if (typeof expr === 'object' && expr !== null) {
-      expr.latex = latex;
+      (expr as ExpressionObject).latex = latex;
     }
     return expr;
   }
@@ -2059,16 +2056,13 @@ export class _Parser implements Parser {
       : ['Error', msg];
   }
 
-  private isFunctionHead(expr: Expression | null): boolean {
-    if (expr === null) return false;
-
-    const s = symbol(expr);
-    if (!s) return false;
+  private isFunctionOperator(id: MathJsonIdentifier | null): boolean {
+    if (id === null) return false;
 
     // Is this a valid function identifier?
-    if (this.getIdentifierType(s) === 'function') return true;
+    if (this.getIdentifierType(id) === 'function') return true;
 
-    // This doesn't look like the expression could be the head of a function:
+    // This doesn't look like the expression could be the name of a function:
     // it's a number, a string, a symbol identifier or something else.
     return false;
   }
@@ -2181,7 +2175,7 @@ export function parse(
   expr ??= ['Sequence'];
 
   if (options.preserveLatex) {
-    if (Array.isArray(expr)) expr = { latex, fn: expr };
+    if (Array.isArray(expr)) expr = { latex, fn: expr } as Expression;
     else if (typeof expr === 'number')
       expr = { latex, num: Number(expr).toString() };
     else if (
@@ -2191,7 +2185,8 @@ export function parse(
     )
       expr = { latex, str: expr.slice(1, -1) };
     else if (typeof expr === 'string') expr = { latex, sym: expr };
-    else if (typeof expr === 'object' && expr !== null) expr.latex = latex;
+    else if (typeof expr === 'object' && expr !== null)
+      (expr as ExpressionObject).latex = latex;
   }
 
   return expr;

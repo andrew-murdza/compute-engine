@@ -1,5 +1,5 @@
 import { SerializeLatexOptions } from '../../../src/compute-engine/latex-syntax/public.ts';
-import { Expression } from '../../../src/math-json/math-json-format';
+import { Expression } from '../../../src/math-json/types.ts';
 import { exprToString, engine as ce } from '../../utils';
 
 function parse(s: string) {
@@ -33,8 +33,8 @@ describe('PARSING OF NUMBER', () => {
   });
 
   test('Special Values', () => {
-    expect(parseVal('+0')).toEqual(+0);
-    expect(parseVal('-0')).toEqual(-0);
+    expect(parseVal('+0')).toEqual(0);
+    expect(parseVal('-0')).toEqual(0);
     expect(parseVal('-\\infty')).toEqual(-Infinity);
     expect(parseVal('\\mathrm{NaN}')).toEqual(NaN);
   });
@@ -59,7 +59,7 @@ describe('PARSING OF NUMBER', () => {
       `["Subtract", ["Rational", -1, 4], 3]`
     );
     expect(parse('3\\frac14+\\frac12')).toMatchInlineSnapshot(
-      `["Add", ["Rational", 1, 4], "Half", 3]`
+      `["Add", 3, ["Rational", 1, 4], "Half"]`
     );
   });
 

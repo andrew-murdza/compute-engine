@@ -3,6 +3,7 @@ import {
   SemiBoxedExpression,
 } from './boxed-expression/public';
 import { isInequality } from './boxed-expression/utils';
+import { canonicalAdd } from './library/arithmetic-add';
 import { Rule } from './public';
 import { matchRules } from './rules';
 import { expand } from './symbolic/expand';
@@ -126,7 +127,7 @@ export const UNIVARIATE_ROOTS: Rule[] = [
     replace: ['Divide', ['Ln', ['Negate', ['Divide', '__c', '__a']]], '__b'],
     exact: false,
     condition: ({ __a, __c }, ce) =>
-      ((!__a.isZero && ce.div(__c, __a).isNegative) ?? false) &&
+      ((!__a.isZero && __c.div(__a).isNegative) ?? false) &&
       !__a.has('_x') &&
       !__c.has('_x'),
   },
@@ -137,7 +138,7 @@ export const UNIVARIATE_ROOTS: Rule[] = [
     replace: ['Ln', ['Negate', ['Divide', '__c', '__a']]],
     exact: false,
     condition: ({ __a, __c }, ce) =>
-      ((!__a.isZero && ce.div(__c, __a).isNegative) ?? false) &&
+      ((!__a.isZero && __c.div(__a).isNegative) ?? false) &&
       !__a.has('_x') &&
       !__c.has('_x'),
   },
@@ -197,13 +198,8 @@ export function findUnivariateRoots(
 ): ReadonlyArray<BoxedExpression> {
   const ce = expr.engine;
 
-  if (expr.head === 'Equal') {
-    expr = ce
-      .function('Add', [
-        expr.op1.canonical,
-        ce.function('Negate', [expr.op2.canonical]),
-      ])
-      .simplify();
+  if (expr.operator === 'Equal') {
+    expr = canonicalAdd(ce, [expr.op1.canonical, expr.op2.neg()]).simplify();
   }
 
   const rules = ce.getRuleSet('solve-univariate')!;
@@ -219,7 +215,7 @@ export function findUnivariateRoots(
   //
   // Note: @todo we can try different heuristics here:
   // Collection: reduce the numbers of occurrences of the unknown
-  // Attraction: bring the occurences of the unknonw closer together
+  // Attraction: bring the occurrences of the unknown closer together
   // Function Swapping: replacing function with ones easier to solve
   //    - square roots: square both sides
   //    - logs: exponentiate both sides
@@ -247,10 +243,10 @@ export function findUnivariateRoots(
   return result.map((x) => x.evaluate().simplify());
 }
 
-/** Expr is an equation with a head of
+/** Expr is an equation with an operator of
  * - `Equal`, `Less`, `Greater`, `LessEqual`, `GreaterEqual`
  *
- * Return an expression with the same head, but with the first argument
+ * Return an expression with the same operator, but with the first argument
  * a variable, if possible:
  * `2x < 4` => `x < 2`
  */
@@ -259,13 +255,14 @@ export function univariateSolve(
   x: string
 ): ReadonlyArray<SemiBoxedExpression> | null {
   const ce = expr.engine;
-  const name = expr.head;
+  const name = expr.operator;
   if (name === 'Tuple') {
     // @todo: System of equations
     return null;
   }
 
-  if (name === null || !isInequality(expr)) return null;
+  if (name === null || !(expr.operator === 'Equal' || isInequality(expr)))
+    return null;
 
   let lhs: SemiBoxedExpression = expr.op1;
   const rhs = expr.op2;

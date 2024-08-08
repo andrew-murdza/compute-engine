@@ -1,9 +1,9 @@
-import { Expression } from '../../math-json';
+import { Expression, MathJsonIdentifier } from '../../math-json';
 import {
-  ONLY_EMOJIS,
+  EMOJIS,
   isValidIdentifier,
   validateIdentifier,
-} from '../../math-json/utils';
+} from '../../math-json/identifiers';
 import { SYMBOLS } from './dictionary/definitions-symbols';
 import { Parser } from './public';
 
@@ -303,7 +303,7 @@ export function parseInvalidIdentifier(parser: Parser): Expression | null {
  *    - `\mathrm{\alpha_{12}}` or
  *    - `\mathit{speed\unicode{"2012}of\unicode{"2012}sound}`
  */
-export function parseIdentifier(parser: Parser): string | null {
+export function parseIdentifier(parser: Parser): MathJsonIdentifier | null {
   //
   // Shortcut: Is it a single-letter identifier?
   //
@@ -321,7 +321,7 @@ export function parseIdentifier(parser: Parser): string | null {
   //
   if (!id) {
     id = '';
-    while (!parser.atEnd && ONLY_EMOJIS.test(id + parser.peek))
+    while (!parser.atEnd && EMOJIS.test(id + parser.peek))
       id += parser.nextToken();
     if (!id) id = null;
   }

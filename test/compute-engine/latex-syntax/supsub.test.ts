@@ -1,73 +1,27 @@
-import { Expression } from '../../../src/math-json/math-json-format';
-import { latex, engine as ce } from '../../utils';
-
-describe('POWER', () => {
-  test('Power Invalid forms', () => {
-    expect(latex(['Power'])).toMatchInlineSnapshot(
-      `\\error{\\blacksquare}^{\\error{\\blacksquare}}`
-    );
-    expect(
-      latex(['Power', null as unknown as Expression])
-    ).toMatchInlineSnapshot(`\\error{\\blacksquare}^{\\error{\\blacksquare}}`);
-    expect(
-      latex(['Power', undefined as unknown as Expression])
-    ).toMatchInlineSnapshot(`\\error{\\blacksquare}^{\\error{\\blacksquare}}`);
-    expect(latex(['Power', 1])).toMatchInlineSnapshot(
-      `1^{\\error{\\blacksquare}}`
-    );
-    expect(latex(['Power', NaN])).toMatchInlineSnapshot(
-      `\\operatorname{NaN}^{\\error{\\blacksquare}}`
-    );
-    expect(latex(['Power', Infinity])).toMatchInlineSnapshot(
-      `\\infty^{\\error{\\blacksquare}}`
-    );
-  });
-});
-
-describe('INVERSE FUNCTION', () => {
-  test('Valid forms', () => {
-    expect(latex(['Apply', ['InverseFunction', 'Sin']])).toMatchInlineSnapshot(
-      `\\arcsin(\\error{\\blacksquare})`
-    );
-    expect(latex(['Apply', ['InverseFunction', 'f']])).toMatchInlineSnapshot(
-      `f^{-1}()`
-    );
-  });
-});
-
-describe('COMPLEX SYMBOLS', () => {
-  test('\\mathord{x_{\\mathrm{max}}}', () =>
-    expect(
-      ce.parse('\\mathord{x_{\\mathrm{max}}}').canonical.toJSON()
-    ).toMatchInlineSnapshot(`x_max`));
-});
+import { engine as ce } from '../../utils';
 
 describe('SUPSUB', () => {
   test('Superscript', () => {
-    expect(ce.parse('2^2')).toMatchInlineSnapshot(`["Square", 2]`);
+    expect(ce.parse('2^2')).toMatchInlineSnapshot(`4`);
     expect(ce.parse('x^t')).toMatchInlineSnapshot(`["Power", "x", "t"]`);
-    expect(ce.parse('2^{10}')).toMatchInlineSnapshot(`["Power", 2, 10]`);
+    expect(ce.parse('2^{10}')).toMatchInlineSnapshot(`1024`);
     expect(ce.parse('\\pi^2')).toMatchInlineSnapshot(`["Square", "Pi"]`);
-    expect(ce.parse('2^23')).toMatchInlineSnapshot(
-      `["Multiply", 3, ["Square", 2]]`
-    );
+    expect(ce.parse('2^23')).toMatchInlineSnapshot(`["Multiply", 3, 4]`);
     expect(ce.parse('2^\\pi')).toMatchInlineSnapshot(`["Power", 2, "Pi"]`);
     expect(ce.parse('2^\\frac12')).toMatchInlineSnapshot(`["Sqrt", 2]`);
     expect(ce.parse('2^{3^4}')).toMatchInlineSnapshot(
-      `["Power", 2, ["Power", 3, 4]]`
+      `2417851639229258349412352`
     );
-    expect(ce.parse('2^{10}')).toMatchInlineSnapshot(`["Power", 2, 10]`);
-    expect(ce.parse('2^{-2}')).toMatchInlineSnapshot(
-      `["Divide", 1, ["Square", 2]]`
-    );
+    expect(ce.parse('2^{10}')).toMatchInlineSnapshot(`1024`);
+    expect(ce.parse('2^{-2}')).toMatchInlineSnapshot(`["Divide", 1, 4]`);
     expect(ce.parse('2^3^4')).toMatchInlineSnapshot(
       `["Power", 2, ["List", 3, 4]]`
     );
     expect(ce.parse('2^{3^4}')).toMatchInlineSnapshot(
-      `["Power", 2, ["Power", 3, 4]]`
+      `2417851639229258349412352`
     );
     expect(ce.parse('12^34.5')).toMatchInlineSnapshot(
-      `["Multiply", 4.5, ["Power", 12, 3]]`
+      `["Multiply", 4.5, 1728]`
     );
     expect(ce.parse('x^2')).toMatchInlineSnapshot(`["Square", "x"]`);
     expect(ce.parse('x^{x+1}')).toMatchInlineSnapshot(

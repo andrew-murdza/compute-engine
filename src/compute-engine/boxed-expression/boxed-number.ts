@@ -21,16 +21,19 @@ import {
   isOne,
   reducedRational,
   neg,
+  asMachineRational,
 } from '../numerics/rationals';
 
 import { _BoxedExpression } from './abstract-boxed-expression';
 import { hashCode, bignumPreferred } from './utils';
 import { Expression } from '../../math-json';
-import { asMachineInteger, signDiff } from './numerics';
+import { asFloat, asRational, signDiff } from './numerics';
 import { match } from './match';
-import { Terms } from '../numerics/terms';
-import { Product } from '../symbolic/product';
 import { canonicalDivide } from '../library/arithmetic-divide';
+import { NumericValue } from '../numeric-value/public';
+import { mul } from '../library/arithmetic-multiply';
+import { canonicalInteger } from '../numerics/numeric';
+import { add } from '../numerics/terms';
 
 /**
  * BoxedNumber
@@ -166,21 +169,13 @@ export class BoxedNumber extends _BoxedExpression {
     return value;
   }
 
-  get head(): string {
+  get operator(): string {
+    // @fixme: return 'Number', 'Integer', 'Rational', 'Real'
     return 'Number';
   }
 
   get isPure(): boolean {
     return true;
-  }
-
-  get isExact(): boolean {
-    const v = this._value;
-    if (typeof v === 'number') return Number.isInteger(v);
-    if (v instanceof Decimal) return v.isInteger();
-    if (v instanceof Complex)
-      return Number.isInteger(v.re) && Number.isInteger(v.im);
-    return isRational(v);
   }
 
   get isCanonical(): boolean {
@@ -210,92 +205,164 @@ export class BoxedNumber extends _BoxedExpression {
   }
 
   inv(): BoxedExpression {
-    let n = this.engine._numericValue(this._value);
-    return this.engine._fromNumericValue(n.inv());
+    const n = this.engine._numericValue(this._value);
+    return this.engine.box(n.inv());
   }
 
   abs(): BoxedExpression {
-    let n = this.engine._numericValue(this._value);
-    return this.engine._fromNumericValue(n.abs());
+    const n = this.engine._numericValue(this._value);
+    return this.engine.box(n.abs());
   }
 
-  add(...rhs: (number | BoxedExpression)[]): BoxedExpression {
-    if (rhs.length === 0) return this;
+  add(rhs: number | BoxedExpression): BoxedExpression {
     const ce = this.engine;
-
-    // @fastpath
-    if (rhs.length === 1) {
-      let n = ce._numericValue(this._value);
-      if (typeof rhs[0] === 'number')
-        return ce._fromNumericValue(n.add(rhs[0]));
-
-      if (rhs[0].numericValue !== null)
-        return ce._fromNumericValue(
-          n.add(ce._numericValue(rhs[0].numericValue))
-        );
+    if (typeof rhs === 'number') {
+      const n = ce._numericValue(this._value);
+      return ce.box(n.add(ce._numericValue(rhs)));
     }
-
-    return new Terms(ce, [
-      this,
-      ...rhs.map((x) => (typeof x === 'number' ? ce.number(x) : x)),
-    ]).asExpression();
+    if (rhs.numericValue !== null) {
+      const n = ce._numericValue(this._value);
+      return ce.box(n.add(ce._numericValue(rhs.numericValue)));
+    }
+    return add(this.canonical, rhs.canonical);
   }
 
-  sub(rhs: BoxedExpression): BoxedExpression {
-    return this.add(rhs.neg());
-  }
-
-  mul(...rhs: (number | BoxedExpression)[]): BoxedExpression {
-    if (rhs.length === 0) return this;
-
+  mul(rhs: NumericValue | number | BoxedExpression): BoxedExpression {
+    if (rhs instanceof NumericValue) {
+      if (this.isOne) return this.engine.box(rhs);
+      if (this.isNegativeOne) return this.engine.box(rhs.neg());
+      const n = this.engine._numericValue(this._value);
+      return this.engine.box(n.mul(rhs));
+    }
     const ce = this.engine;
-
-    // @fastpath
-    if (rhs.length === 1) {
-      let n = ce._numericValue(this._value);
-      if (typeof rhs[0] === 'number')
-        return ce._fromNumericValue(n.mul(rhs[0]));
-
-      if (rhs[0].numericValue !== null)
-        return ce._fromNumericValue(
-          n.mul(ce._numericValue(rhs[0].numericValue))
-        );
+    if (typeof rhs === 'number') {
+      const n = ce._numericValue(this._value);
+      return ce.box(n.mul(rhs));
     }
-
-    return new Product(ce, [
-      this,
-      ...rhs.map((x) => (typeof x === 'number' ? ce.number(x) : x)),
-    ]).asExpression();
+    if (rhs.numericValue !== null) {
+      const n = ce._numericValue(this._value);
+      return ce.box(n.mul(ce._numericValue(rhs.numericValue)));
+    }
+    return mul(this, rhs);
   }
 
-  div(rhs: BoxedExpression): BoxedExpression {
+  div(rhs: number | BoxedExpression): BoxedExpression {
+    if (typeof rhs === 'number') rhs = this.engine.number(rhs);
+    if (this.isNaN || rhs.isNaN) return this.engine.NaN;
+    if (this.isZero && rhs.isZero) return this.engine.NaN;
+    if (this.isZero && rhs.isFinite) return this.engine.Zero;
+
+    if (rhs.numericValue !== null) {
+      const ce = this.engine;
+      const n = ce._numericValue(this._value);
+      return ce.box(n.div(ce._numericValue(rhs.numericValue)));
+    }
     return canonicalDivide(this, rhs);
   }
 
-  pow(exp: number | BoxedExpression): BoxedExpression {
+  pow(
+    exp: number | [num: number, denom: number] | BoxedExpression
+  ): BoxedExpression {
+    if (exp === 0) return this.engine.One;
+    if (exp === 1) return this;
+    if (exp === -1) return this.inv();
+
+    if (!this.isCanonical) return this.canonical.pow(exp);
+
+    if (typeof exp !== 'number') {
+      exp = this.engine.box(exp);
+      if (exp.isZero) return this.engine.One;
+      if (exp.isOne) return this;
+      if (exp.isNegativeOne) return this.inv();
+      if (exp.isEqual(this.engine.Half)) return this.sqrt();
+      if (exp.isEqual(this.engine.Half.neg())) return this.sqrt().inv();
+      if (exp.operator === 'Negate') return this.pow(exp.op1).inv();
+    }
+
     if (exp === 0.5) return this.sqrt();
     if (exp === -0.5) return this.sqrt().inv();
-    const e = typeof exp === 'number' ? exp : asMachineInteger(exp);
-    console.assert(Number.isInteger(e));
-    if (!e) return this.engine.NaN;
-    let n = this.engine._numericValue(this._value);
-    return this.engine._fromNumericValue(n.pow(e));
+
+    const n = this.engine._numericValue(this._value);
+
+    const e = typeof exp === 'number' ? exp : exp.numericValue;
+    if (e !== null) {
+      let v: NumericValue | undefined = undefined;
+
+      if (typeof e === 'number') v = n.pow(e);
+
+      if (e instanceof Decimal) v = n.pow(e.toNumber());
+
+      if (isRational(e)) {
+        const r = asMachineRational(e);
+        if (n.im === 0 && r[1] === 3) {
+          // If we have a cube root, attempt to extract a perfect cube
+          // if the base is an integer. @fixme: that should be in ExactNumericValue
+          const base = n.re;
+          if (Number.isInteger(base)) {
+            const sign = base < 0 ? -1 : 1;
+            const [factor, root] = canonicalInteger(sign > 0 ? base : -base, 3);
+            if (factor !== 1) {
+              const ce = this.engine;
+              return ce
+                .number(sign * factor)
+                .mul(ce.number(root).pow([1, 3]))
+                .pow(r[0]);
+            }
+          }
+        }
+        v = n.pow(r);
+      }
+
+      if (e instanceof Complex) v = n.pow(e);
+      if (v && v.isExact) return this.engine.box(v);
+    }
+
+    return this.engine._fn('Power', [this, this.engine.box(exp)]);
   }
 
   sqrt(): BoxedExpression {
-    let n = this.engine._numericValue(this._value);
-    return this.engine._fromNumericValue(n.sqrt());
+    const n = this.engine._numericValue(this._value);
+    return this.engine.box(n.sqrt());
   }
 
-  // root(exp: number | BoxedExpression): BoxedExpression {
-  //   if (exp === 2) return this.sqrt();
-  //   const e = typeof exp === 'number' ? exp : asMachineInteger(exp);
-  //   if (!e) return this.engine.NaN;
-  //   let n = this.engine._numericValue(this._value);
-  //   return this.engine._fromNumericValue(n.root(e));
+  ln(semiBase?: SemiBoxedExpression): BoxedExpression {
+    const base = semiBase ? this.engine.box(semiBase) : undefined;
+    if (!this.isCanonical) return this.canonical.ln(base);
+    if (this.isOne) return this.engine.Zero;
+    if (this.isNegativeOne) return this.engine.Pi.mul(this.engine.I);
+    if (this.isZero) return this.engine.NaN;
+    if (base && this.isEqual(base)) return this.engine.One;
+    if (
+      (!base || base.symbol === 'ExponentialE') &&
+      this.symbol === 'ExponentialE'
+    )
+      return this.engine.One;
 
-  //   return this.engine.NaN;
-  // }
+    if (isRational(this._value)) {
+      const [num, denom] = this._value;
+      const ce = this.engine;
+      if (num === 1) return ce.number(denom).ln(base).neg();
+      return ce.number(num).ln(base).sub(ce.number(denom).ln(base));
+    }
+
+    const f = asFloat(this);
+    if (f !== null && Number.isInteger(f) && f > 0) {
+      const ce = this.engine;
+      let [factor, root] = canonicalInteger(f, 3);
+      if (factor !== 1)
+        return ce.number(factor).ln(base).mul(3).add(ce.number(root).ln(base));
+      [factor, root] = canonicalInteger(f, 2);
+      if (factor !== 1)
+        return ce.number(factor).ln(base).mul(2).add(ce.number(root).ln(base));
+    }
+
+    if (base) {
+      if (asFloat(base) === 10) return this.engine._fn('Log', [this]);
+      return this.engine._fn('Log', [this, base]);
+    }
+
+    return this.engine._fn('Ln', [this]);
+  }
 
   get domain(): BoxedDomain {
     this._domain ??= this.engine.domain(inferNumericDomain(this._value));
@@ -658,16 +725,33 @@ export class BoxedNumber extends _BoxedExpression {
     return this.engine.number(canonicalNumber(this.engine, this._value));
   }
 
+  toNumericValue(): [NumericValue, BoxedExpression] {
+    console.assert(this.isCanonical);
+    const v = this.numericValue;
+    if (typeof v === 'number' || isRational(v) || v instanceof Decimal)
+      return [this.engine._numericValue(v), this.engine.One];
+    if (v instanceof Complex)
+      return [this.engine._numericValue(v), this.engine.One];
+
+    const r = asRational(this);
+    return r
+      ? [this.engine._numericValue(r), this.engine.One]
+      : [this.engine._numericValue(1), this];
+
+    // return [this.engine._numericValue(this._value), this.engine.One];
+  }
+
   simplify(): BoxedExpression {
     return this.canonical;
   }
 
   evaluate(options?: EvaluateOptions): BoxedExpression {
     if (options?.numericMode) return this.N();
-    return this;
+    return this.canonical;
   }
 
   N(): BoxedExpression {
+    if (!this.isCanonical) return this.canonical.N();
     if (!Array.isArray(this._value)) return this;
 
     // If a rational, evaluate as an approximation

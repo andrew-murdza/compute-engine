@@ -9,56 +9,61 @@ import {
   CanonicalOptions,
 } from './public';
 import { _BoxedExpression } from './abstract-boxed-expression';
-import { BoxedDictionary } from './boxed-dictionary';
-import { BoxedFunction, makeCanonicalFunction } from './boxed-function';
+import { BoxedFunction } from './boxed-function';
 import { BoxedNumber } from './boxed-number';
 import { BoxedString } from './boxed-string';
-import { Expression, MathJsonNumber } from '../../math-json/math-json-format';
-import { isValidIdentifier, missingIfEmpty } from '../../math-json/utils';
+import {
+  Expression,
+  MathJsonIdentifier,
+  MathJsonNumber,
+} from '../../math-json/types';
+import { missingIfEmpty, operands } from '../../math-json/utils';
 import {
   Rational,
   isBigRational,
   isMachineRational,
+  isOne,
   isRational,
   neg,
 } from '../numerics/rationals';
 import { asBigint } from './utils';
-import { bigint, bigintValue } from '../numerics/numeric-bigint';
+import { bigintValue } from '../numerics/numeric-bigint';
 import { isDomainLiteral } from '../library/domains';
 import { BoxedTensor, expressionTensorInfo } from './boxed-tensor';
 import { canonicalForm } from './canonical';
-import { asFloat, asMachineInteger } from './numerics';
+import { asFloat } from './numerics';
+import { canonicalAdd } from '../library/arithmetic-add';
+import { flatten } from '../symbolic/flatten';
+import { shouldHold, semiCanonical, canonical } from '../symbolic/utils';
+import { order } from './order';
+import { adjustArguments, checkNumericArgs } from './validate';
+import { canonicalMultiply } from '../library/arithmetic-multiply';
+import { NumericValue } from '../numeric-value/public';
+import { ExactNumericValue } from '../numeric-value/exact-numeric-value';
+import { isValidIdentifier } from '../../math-json/identifiers';
 
 /**
  * ### THEORY OF OPERATIONS
  *
- * 1/ Boxing does not depend on the numeric mode. The numeric mode could be
- * changed later, but the previously boxed numbers could not be retroactively
- * upgraded.
  *
- * The `numericMode` is taken into account only during evaluation.
+ * 1/ The result of boxing is canonical by default.
  *
- * Therefore, a boxed expression may contain a mix of number representations.
+ *   This is the most common need (i.e. to evaluate an expression you need it
+ *   in canonical form). Creating a boxed expression which is canonical from the
+ *   start avoid going through an intermediary step with a non-canonical
+ *   expression.
  *
- * 2/ The result of boxing is canonical by default.
- *
- * This is the most common need (i.e. as soon as you want to evaluate an
- * expression you need a canonical expression). Creating a boxed expression
- * which is canonical from the start avoid going through an intermediary step
- * with a non-canonical expression.
- *
- * 3/ When boxing (and canonicalizing), if the function is "scoped", a new
+ * 2/ When boxing (and canonicalizing), if the function is "scoped", a new
  *    scope is created before the canonicalization, so that any declaration
  *    are done within that scope. Example of scoped functions include `Block`
  *    and `Sum`.
  *
- * 4/ When implementing an `evaluate()`:
+ * 3/ When implementing an `evaluate()`:
  * - if `bignumPreferred()` all operations should be done in bignum and complex,
  *    otherwise, they should all be done in machine numbers and complex.
- * - if not `complexAllowed()`, return `NaN` if a complex value is encountered
- * - if a `Sqrt` (of a rational) is encountered, preserve it
- * - if a `hold` constant is encountered, preserve it
  * - if a rational is encountered, preserve it
+ * - if a `Sqrt` of a rational is encountered, preserve it
+ * - if a `hold` constant is encountered, preserve it
  * - if one of the arguments is not exact, return an approximation
  *
  * EXACT
@@ -92,15 +97,18 @@ export function boxNumber(
   num:
     | MathJsonNumber
     | number
+    | bigint
     | string
     | Complex
     | Decimal
     | Rational
     | [Decimal, Decimal],
-  options?: { metadata?: Metadata; canonical?: boolean }
+  options: { metadata?: Metadata; canonical: boolean }
 ): BoxedExpression | null {
-  options = options ? { ...options } : {};
-  if (!('canonical' in options)) options.canonical = true;
+  //
+  // Bigint?
+  // @fixme: handle bigint directly without going through bignum
+  if (typeof num === 'bigint') num = ce.bignum(num);
 
   //
   // Do we have a machine number or bignum?
@@ -112,48 +120,29 @@ export function boxNumber(
   // Do we have a rational or big rational?
   //
 
-  if (
-    Array.isArray(num) &&
-    num.length === 2 &&
-    num[0] instanceof Decimal &&
-    num[1] instanceof Decimal
-  ) {
-    if (!num[0].isInteger() || !num[1].isInteger())
-      throw new Error('Array argument to `boxNumber()` should be two integers');
-    num = [bigint(num[0].toString()), bigint(num[1].toString())];
-  }
-
   if (isRational(num)) {
-    if (num.length !== 2)
-      throw new Error(
-        'Array argument to `boxNumber()` should be two integers or two bignums'
-      );
-    const [n, d] = num;
+    console.assert(num.length === 2);
+    const [n, d]: [number, number] | [bigint, bigint] = num;
     if (typeof n === 'bigint' && typeof d === 'bigint') {
       if (n === d) return d === BigInt(0) ? ce.NaN : ce.One;
       if (n === BigInt(0)) return ce.Zero;
       if (d === BigInt(1)) return ce.number(n, options);
       if (d === BigInt(-1)) return ce.number(-n, options);
       if (n === BigInt(1) && d === BigInt(2)) return ce.Half;
-      return new BoxedNumber(ce, [n, d], options);
+      return new BoxedNumber(ce, num, options);
     }
 
-    if (typeof n !== 'number' || typeof d !== 'number')
-      throw new Error(
-        'Array argument to `boxNumber()` should be two integers or two bignums'
-      );
+    console.assert(Number.isInteger(n) && Number.isInteger(d));
 
-    if (!isFinite(n) || !isFinite(d))
-      return ce.div(ce.number(n, options), ce.number(d, options));
+    if (!isFinite(n as number) || !isFinite(d as number))
+      return ce.number(n, options).div(ce.number(d, options));
 
-    if (!Number.isInteger(n) || !Number.isInteger(d))
-      throw new Error('Array argument to `boxNumber()` should be two integers');
     if (d === n) return d === 0 ? ce.NaN : ce.One;
     if (n === 0) return ce.Zero;
     if (d === 1) return ce.number(n, options);
     if (d === -1) return ce.number(-n, options);
     if (n === 1 && d === 2) return ce.Half;
-    return new BoxedNumber(ce, [n, d], options);
+    return new BoxedNumber(ce, num, options);
   }
 
   //
@@ -182,39 +171,38 @@ export function boxNumber(
     strNum = num.num;
   }
 
-  if (strNum) {
-    strNum = strNum.toLowerCase();
+  if (!strNum) return null;
 
-    // Remove trailing "n" or "d" letter (from legacy version of MathJSON spec)
-    if (/[0-9][nd]$/.test(strNum)) strNum = strNum.slice(0, -1);
+  strNum = strNum.toLowerCase();
 
-    // Remove any whitespace:
-    // Tab, New Line, Vertical Tab, Form Feed, Carriage Return, Space, Non-Breaking Space
-    strNum = strNum.replace(/[\u0009-\u000d\u0020\u00a0]/g, '');
+  // Remove trailing "n" or "d" letter (from legacy version of MathJSON spec)
+  if (/[0-9][nd]$/.test(strNum)) strNum = strNum.slice(0, -1);
 
-    // Special case some common values to share boxed instances
-    if (strNum === 'nan') return ce.NaN;
-    if (strNum === 'infinity' || strNum === '+infinity')
-      return ce.PositiveInfinity;
-    if (strNum === '-infinity') return ce.NegativeInfinity;
-    if (strNum === '0') return ce.Zero;
-    if (strNum === '1') return ce.One;
-    if (strNum === '-1') return ce.NegativeOne;
+  // Remove any whitespace:
+  // Tab, New Line, Vertical Tab, Form Feed, Carriage Return, Space, Non-Breaking Space
+  strNum = strNum.replace(/[\u0009-\u000d\u0020\u00a0]/g, '');
 
-    // Do we have repeating digits?
-    if (/\([0-9]+\)/.test(strNum)) {
-      const [_, body, repeat, trail] =
-        strNum.match(/(.+)\(([0-9]+)\)(.+)?$/) ?? [];
-      // @todo we probably shouldn't be using the ce.precision since it may change later
-      strNum =
-        body +
-        repeat.repeat(Math.ceil(ce.precision / repeat.length)) +
-        (trail ?? '');
-    }
+  // Special case some common values to share boxed instances
+  if (strNum === 'nan') return ce.NaN;
+  if (strNum === 'infinity' || strNum === '+infinity')
+    return ce.PositiveInfinity;
+  if (strNum === '-infinity') return ce.NegativeInfinity;
+  if (strNum === '0') return ce.Zero;
+  if (strNum === '1') return ce.One;
+  if (strNum === '-1') return ce.NegativeOne;
 
-    return boxNumber(ce, ce.bignum(strNum), options);
+  // Do we have repeating digits?
+  if (/\([0-9]+\)/.test(strNum)) {
+    const [_, body, repeat, trail] =
+      strNum.match(/(.+)\(([0-9]+)\)(.+)?$/) ?? [];
+    // @todo we probably shouldn't be using the ce.precision since it may change later
+    strNum =
+      body +
+      repeat.repeat(Math.ceil(ce.precision / repeat.length)) +
+      (trail ?? '');
   }
-  return null;
+
+  return boxNumber(ce, ce.bignum(strNum), options);
 }
 
 function boxHold(
@@ -222,19 +210,21 @@ function boxHold(
   expr: SemiBoxedExpression | null,
   options: { canonical?: CanonicalOptions }
 ): BoxedExpression {
-  if (expr === null) return ce.error('missing');
-  if (typeof expr === 'object' && expr instanceof _BoxedExpression) return expr;
+  if (expr instanceof _BoxedExpression) return expr;
 
   expr = missingIfEmpty(expr as Expression);
 
   if (typeof expr === 'string') return box(ce, expr, options);
 
   if (Array.isArray(expr)) {
-    const boxed = expr.map((x) => boxHold(ce, x, options));
-    return new BoxedFunction(ce, boxed[0], boxed.slice(1));
+    const [fnName, ...ops] = expr;
+    return new BoxedFunction(
+      ce,
+      fnName,
+      ops.map((x) => boxHold(ce, x, options))
+    );
   }
   if (typeof expr === 'object') {
-    if ('dict' in expr) return new BoxedDictionary(ce, expr.dict);
     if ('fn' in expr) return boxHold(ce, expr.fn, options);
     if ('str' in expr) return new BoxedString(ce, expr.str);
     if ('sym' in expr) return box(ce, expr.sym, options);
@@ -245,7 +235,7 @@ function boxHold(
 }
 
 /**
- * Given a head and a set of arguments, return a boxed function expression.
+ * Given a name and a set of arguments, return a boxed function expression.
  *
  * If available, preserve LaTeX and wikidata metadata in the boxed expression.
  *
@@ -254,7 +244,7 @@ function boxHold(
 
 export function boxFunction(
   ce: IComputeEngine,
-  head: string,
+  name: MathJsonIdentifier,
   ops: readonly SemiBoxedExpression[],
   options?: { metadata?: Metadata; canonical?: CanonicalOptions }
 ): BoxedExpression {
@@ -265,7 +255,7 @@ export function boxFunction(
   // Hold
   //
 
-  if (head === 'Hold') {
+  if (name === 'Hold') {
     return new BoxedFunction(ce, 'Hold', [boxHold(ce, ops[0], options)], {
       ...options,
       canonical: true,
@@ -275,9 +265,9 @@ export function boxFunction(
   //
   // Error
   //
-  if (head === 'Error' || head === 'ErrorCode') {
+  if (name === 'Error' || name === 'ErrorCode') {
     return ce._fn(
-      head,
+      name,
       ops.map((x) => ce.box(x, { canonical: false })),
       options.metadata
     );
@@ -286,7 +276,7 @@ export function boxFunction(
   //
   // String
   //
-  if (head === 'String') {
+  if (name === 'String') {
     if (ops.length === 0) return new BoxedString(ce, '', options.metadata);
     return new BoxedString(
       ce,
@@ -298,20 +288,20 @@ export function boxFunction(
   //
   // Symbol
   //
-  if (head === 'Symbol' && ops.length > 0) {
+  if (name === 'Symbol' && ops.length > 0) {
     return ce.symbol(ops.map((x) => asString(x) ?? '').join(''), options);
   }
 
   //
   // Domain
   //
-  if (head === 'Domain')
+  if (name === 'Domain')
     return ce.domain(ops[0] as DomainExpression, options.metadata);
 
   //
   // Number
   //
-  if (head === 'Number' && ops.length === 1) return box(ce, ops[0], options);
+  if (name === 'Number' && ops.length === 1) return box(ce, ops[0], options);
 
   const canonicalNumber =
     options.canonical === true ||
@@ -325,38 +315,25 @@ export function boxFunction(
     //
     // Rational (as Divide)
     //
-    if ((head === 'Divide' || head === 'Rational') && ops.length === 2) {
-      if (
-        ops[0] instanceof _BoxedExpression &&
-        ops[1] instanceof _BoxedExpression
-      ) {
-        if (ce.numericMode === 'machine') {
-          const [fn, fd] = [asFloat(ops[0]), asFloat(ops[1])];
-          if (
-            fn !== null &&
-            Number.isInteger(fn) &&
-            fd !== null &&
-            Number.isInteger(fd)
-          )
-            return ce.number([fn, fd], options);
-        }
-        const [n, d] = [asBigint(ops[0]), asBigint(ops[1])];
-        if (n !== null && d !== null) return ce.number([n, d], options);
-      } else {
-        const [n, d] = [
-          bigintValue(ops[0] as Expression),
-          bigintValue(ops[1] as Expression),
-        ];
-        if (n !== null && d !== null) return ce.number([n, d], options);
+    if ((name === 'Divide' || name === 'Rational') && ops.length === 2) {
+      const n =
+        ops[0] instanceof _BoxedExpression
+          ? asBigint(ops[0])
+          : bigintValue(ops[0] as Expression);
+      if (n !== null) {
+        const d =
+          ops[1] instanceof _BoxedExpression
+            ? asBigint(ops[1])
+            : bigintValue(ops[1] as Expression);
+        if (d !== null) return ce.number([n, d], options);
       }
-
-      head = 'Divide';
+      name = 'Divide';
     }
 
     //
     // Complex
     //
-    if (head === 'Complex') {
+    if (name === 'Complex') {
       if (ops.length === 1) {
         // If single argument, assume it's imaginary
         // @todo: use machineValue() & symbol() instead of box()
@@ -364,7 +341,7 @@ export function boxFunction(
         const im = asFloat(op1);
         if (im !== null && im !== 0)
           return ce.number(ce.complex(0, im), options);
-        return ce.evalMul(op1, ce.I);
+        return op1.mul(ce.I);
       }
       if (ops.length === 2) {
         const op1 = box(ce, ops[0], options);
@@ -377,7 +354,7 @@ export function boxFunction(
             return ce.number(ce.complex(re, im), options);
           return op1;
         }
-        return ce.add(op1, ce.evalMul(op2, ce.I));
+        return op1.add(op2.mul(ce.I));
       }
       throw new Error('Expected one or two arguments with Complex expression');
     }
@@ -387,7 +364,7 @@ export function boxFunction(
     //
     // Distribute over literals
     //
-    if (head === 'Negate' && ops.length === 1) {
+    if (name === 'Negate' && ops.length === 1) {
       const op1 = ops[0];
       if (typeof op1 === 'number') return ce.number(-op1, options);
       if (op1 instanceof Decimal) return ce.number(op1.neg(), options);
@@ -401,61 +378,14 @@ export function boxFunction(
     }
   }
 
-  //
-  // Dictionary
-  //
-  if (head === 'Dictionary') {
-    const dict = {};
-    for (const op of ops) {
-      const arg = ce.box(op, { canonical: options.canonical });
-      const head = arg.head;
-      if (
-        head === 'KeyValuePair' ||
-        head === 'Pair' ||
-        (head === 'Tuple' && arg.nops === 2)
-      ) {
-        const key = arg.op1;
-        if (key.isValid && key.symbol !== 'Nothing') {
-          const value = arg.op2;
-          let k = key.symbol ?? key.string;
-          if (!k && (key.numericValue !== null || key.string)) {
-            const n =
-              typeof key.numericValue === 'number'
-                ? key.numericValue
-                : asMachineInteger(key);
-            if (n && Number.isFinite(n) && Number.isInteger(n))
-              k = n.toString();
-          }
-          if (k) dict[k] = value;
-        }
-      }
-    }
-    return new BoxedDictionary(ce, dict, options);
-  }
-
-  //
-  // Do we have a vector/matrix/tensor?
-  // It has to have a compatible shape: i.e. all elements on an axis have
-  // the same shape.
-  //
-  if (head === 'List' && options.canonical === true) {
-    // @todo: note: we could have a special canonical form for tensors
-    const boxedOps = ops.map((x) => box(ce, x));
-    const { shape, dtype } = expressionTensorInfo('List', boxedOps) ?? {};
-
-    if (dtype && shape) return new BoxedTensor(ce, { head, ops: boxedOps });
-
-    return ce._fn(head, boxedOps);
-  }
-
   if (options.canonical === true)
-    return makeCanonicalFunction(ce, head, ops, options.metadata);
+    return makeCanonicalFunction(ce, name, ops, options.metadata);
 
   return canonicalForm(
     new BoxedFunction(
       ce,
-      head,
-      ops.map((x) => box(ce, x, { canonical: options?.canonical ?? true })),
+      name,
+      ops.map((x) => box(ce, x, { canonical: options.canonical })),
       { metadata: options.metadata, canonical: false }
     ),
     options.canonical ?? false
@@ -465,10 +395,10 @@ export function boxFunction(
 /**
  * Notes about the boxed form:
  *
- * [1] Expression with a head of `Number`, `String`, `Symbol` and `Dictionary`
+ * [1] Expression with an operator of `Number`, `String`, `Symbol` and `Dictionary`
  *      are converted to the corresponding atomic expression.
  *
- * [2] Expressions with a head of `Complex` are converted to a (complex) number
+ * [2] Expressions with an operator of `Complex` are converted to a (complex) number
  *     or a `Add`/`Multiply` expression.
  *
  *     The precedence of `Complex` (for serialization) is sometimes the
@@ -476,8 +406,8 @@ export function boxFunction(
  *    `Multiply` (when im or re === 0). Using a number or an explicit
  *    `Add`/`Multiply` expression avoids this ambiguity.
  *
- * [3] An expression with a `Rational` head is converted to a rational number.
- *    if possible, to a `Divide` otherwise.
+ * [3] An expression with a `Rational` operator is converted to a rational
+ *    number if possible, to a `Divide` otherwise.
  *
  * [4] A `Negate` function applied to a number literal is converted to a number.
  *
@@ -490,10 +420,19 @@ export function boxFunction(
 
 export function box(
   ce: IComputeEngine,
-  expr: null | undefined | Decimal | Complex | Rational | SemiBoxedExpression,
+  expr:
+    | null
+    | undefined
+    | NumericValue
+    | Decimal
+    | Complex
+    | Rational
+    | SemiBoxedExpression,
   options?: { canonical?: CanonicalOptions }
 ): BoxedExpression {
   if (expr === null || expr === undefined) return ce._fn('Sequence', []);
+
+  if (expr instanceof NumericValue) return fromNumericValue(ce, expr);
 
   if (expr instanceof _BoxedExpression)
     return canonicalForm(expr, options?.canonical ?? true);
@@ -517,28 +456,16 @@ export function box(
         return ce.number(expr);
       // This wasn't a valid rational, turn it into a `Divide`
       return canonicalForm(
-        ce.function('Divide', expr, { canonical }),
+        boxFunction(ce, 'Divide', expr, { canonical }),
         options.canonical!
       );
     }
     if (isBigRational(expr)) return ce.number(expr);
 
-    if (typeof expr[0] === 'string')
-      return canonicalForm(
-        ce.function(expr[0], expr.slice(1), { canonical }),
-        options.canonical!
-      );
-
-    console.assert(Array.isArray(expr[0]));
-
-    // It's a function with a head expression
-    // Try to evaluate to something simpler
-    const ops = expr.slice(1).map((x) => box(ce, x, options));
-    // The head could include some unknowns, i.e. `_` which we do *not*
-    // want to get declated in the current scope, so use canonical: false
-    // to avoid that.
-    const head = box(ce, expr[0], { canonical: false });
-    return canonicalForm(new BoxedFunction(ce, head, ops), options.canonical!);
+    return canonicalForm(
+      boxFunction(ce, expr[0], operands(expr), { canonical }),
+      options.canonical!
+    );
   }
 
   //
@@ -571,29 +498,13 @@ export function box(
   //
   // Box a MathJSON object literal
   //
-  if (typeof expr === 'object') {
-    const metadata = {
-      latex: expr.latex,
-      wikidata: expr.wikidata,
-    };
-    if ('dict' in expr)
-      return canonicalForm(
-        new BoxedDictionary(ce, expr.dict, { canonical: true, metadata }),
-        options.canonical!
-      );
+  if (!Array.isArray(expr) && typeof expr === 'object') {
+    // @ts-expect-error
+    const metadata = { latex: expr.latex, wikidata: expr.wikidata };
     if ('fn' in expr) {
-      if (typeof expr.fn[0] === 'string')
-        return canonicalForm(
-          ce.function(expr.fn[0], expr.fn.slice(1), { canonical }),
-          options.canonical!
-        );
+      const [fnName, ...ops] = expr.fn;
       return canonicalForm(
-        new BoxedFunction(
-          ce,
-          box(ce, expr.fn[0], options),
-          expr.fn.slice(1).map((x) => box(ce, x, options)),
-          { metadata }
-        ),
+        boxFunction(ce, fnName, ops, { canonical }),
         options.canonical!
       );
     }
@@ -628,4 +539,250 @@ function asString(expr: SemiBoxedExpression): string | null {
   }
 
   return null;
+}
+
+function makeCanonicalFunction(
+  ce: IComputeEngine,
+  name: string,
+  ops: ReadonlyArray<SemiBoxedExpression>,
+  metadata?: Metadata
+): BoxedExpression {
+  const result = makeNumericFunction(ce, name, ops, metadata);
+  if (result) return result;
+
+  //
+  // Do we have a vector/matrix/tensor?
+  // It has to have a compatible shape: i.e. all elements on an axis have
+  // the same shape.
+  //
+  if (name === 'List') {
+    // @todo: note: we could have a special canonical form for tensors
+    // @fixme: don't box the arguments: they may be lists themselves...
+    const boxedOps = ops.map((x) => ce.box(x));
+    const { shape, dtype } = expressionTensorInfo('List', boxedOps) ?? {};
+
+    if (dtype && shape)
+      return new BoxedTensor(ce, { op: 'List', ops: boxedOps });
+
+    return ce._fn('List', boxedOps);
+  }
+
+  //
+  // Didn't match a short path, look for a definition
+  //
+  const def = ce.lookupFunction(name);
+  if (!def) {
+    // No def. This is for example `["f", 2]` where "f" is not declared.
+    return new BoxedFunction(ce, name, flatten(canonical(ce, ops)), {
+      metadata,
+      canonical: true,
+    });
+  }
+
+  const xs: BoxedExpression[] = [];
+
+  for (let i = 0; i < ops.length; i++) {
+    if (!shouldHold(def.hold, ops.length - 1, i)) {
+      xs.push(ce.box(ops[i]));
+    } else {
+      const y = ce.box(ops[i], { canonical: false });
+      if (y.operator === 'ReleaseHold') xs.push(y.op1.canonical);
+      else xs.push(y);
+    }
+  }
+
+  const sig = def.signature;
+
+  //
+  // 3/ Apply `canonical` handler
+  //
+  // If present, the canonical handler is responsible for
+  //  - validating the signature (domain and number of arguments)
+  //  - sorting them
+  //  - applying involution and idempotent to the expression
+  //  - flatenning sequences
+  //
+  // The arguments have been put in canonical form, as per hold rules.
+  //
+  if (sig.canonical) {
+    try {
+      const result = sig.canonical(ce, xs);
+      if (result) return result;
+    } catch (e) {
+      console.error(e?.stack ?? e.toString());
+    }
+    // The canonical handler gave up, return a non-canonical expression
+    return new BoxedFunction(ce, name, xs, { metadata, canonical: false });
+  }
+
+  //
+  // Flatten any sequence
+  // f(a, Sequence(b, c), Sequence(), d) -> f(a, b, c, d)
+  //
+  let args: BoxedExpression[] = flatten(xs, def.associative ? name : undefined);
+
+  const adjustedArgs = adjustArguments(
+    ce,
+    args,
+    def.hold,
+    def.threadable,
+    sig.params,
+    sig.optParams,
+    sig.restParam
+  );
+
+  // If we have some adjusted arguments, the arguments did not
+  // match the parameters of the signature. We're done.
+  if (adjustedArgs) return ce._fn(name, adjustedArgs, metadata);
+
+  //
+  // 4/ Apply `idempotent` and `involution`
+  //
+  if (args.length === 1 && args[0].operator === name) {
+    // f(f(x)) -> x
+    if (def.involution) return args[0].op1;
+
+    // f(f(x)) -> f(x)
+    if (def.idempotent) return ce._fn(name, xs[0].ops!, metadata);
+  }
+
+  //
+  // 5/ Sort the arguments
+  //
+  if (args.length > 1 && def.commutative === true) args = args.sort(order);
+
+  return ce._fn(name, args, metadata);
+}
+
+function makeNumericFunction(
+  ce: IComputeEngine,
+  name: MathJsonIdentifier,
+  semiOps: ReadonlyArray<SemiBoxedExpression>,
+  metadata?: Metadata
+): BoxedExpression | null {
+  // @todo: is it really necessary to accept semiboxed expressions?
+  let ops: ReadonlyArray<BoxedExpression> = [];
+  if (name === 'Add' || name === 'Multiply')
+    ops = checkNumericArgs(ce, semiCanonical(ce, semiOps), { flatten: name });
+  else if (
+    name === 'Negate' ||
+    name === 'Square' ||
+    name === 'Sqrt' ||
+    name === 'Exp'
+  )
+    ops = checkNumericArgs(ce, semiCanonical(ce, semiOps), 1);
+  else if (name === 'Ln' || name === 'Log')
+    ops = checkNumericArgs(ce, semiCanonical(ce, semiOps));
+  else if (name === 'Power')
+    ops = checkNumericArgs(ce, semiCanonical(ce, semiOps), 2);
+  else if (name === 'Divide')
+    ops = checkNumericArgs(ce, semiCanonical(ce, semiOps));
+  else return null;
+
+  // If some of the arguments are not valid, we're done
+  // (note: the result is canonical, but not valid)
+  if (!ops.every((x) => x.isValid)) return ce._fn(name, ops, metadata);
+
+  //
+  // Short path for some functions
+  // (avoid looking up a definition)
+  //
+  if (name === 'Add') return canonicalAdd(ce, ops);
+  if (name === 'Negate') return ops[0].neg();
+  if (name === 'Multiply') return canonicalMultiply(ce, ops);
+  if (name === 'Divide') return ops.slice(1).reduce((a, b) => a.div(b), ops[0]);
+  if (name === 'Exp') return ce.E.pow(ops[0]);
+  if (name === 'Power') return ops[0].pow(ops[1]);
+  if (name === 'Square') return ops[0].pow(2);
+  if (name === 'Sqrt') return ops[0].sqrt();
+
+  if (name === 'Ln' || name === 'Log') {
+    if (ops[0].isOne) return ce.Zero;
+    if (ops.length === 1) return ce._fn(name, ops, metadata);
+    return ce._fn('Log', ops, metadata);
+  }
+
+  return null;
+}
+
+function fromNumericValue(
+  ce: IComputeEngine,
+  value: NumericValue
+): BoxedExpression {
+  if (value.isZero) return ce.Zero;
+  if (value.isOne) return ce.One;
+  if (value.isNegativeOne) return ce.NegativeOne;
+  if (value.isNaN) return ce.NaN;
+  if (value.isNegativeInfinity) return ce.NegativeInfinity;
+  if (value.isPositiveInfinity) return ce.PositiveInfinity;
+
+  if (!(value instanceof ExactNumericValue)) {
+    const im = value.im;
+    if (im === 0) return ce.number(value.bignumRe ?? value.re);
+    if (value.re === 0) return ce.number(ce.complex(0, im));
+    if (value.bignumRe) {
+      return canonicalMultiply(ce, [
+        ce.number(value.bignumRe),
+        ce.number(ce.complex(0, im)),
+      ]);
+    }
+    return ce.number(ce.complex(value.re, value.im));
+  }
+
+  const terms: BoxedExpression[] = [];
+
+  let sign = 1;
+
+  //
+  // Real Part
+  //
+  if (value.sign !== 0) {
+    // The real part is the product of a rational and radical
+
+    if (value.radical === 1) {
+      // No radical, just a rational part
+      terms.push(ce.number(value.rational));
+    } else {
+      if (value.sign < 0) sign = -1;
+      const rational = sign < 0 ? neg(value.rational) : value.rational;
+      // At least a radical, maybe a rational as well.
+      const radical = ce._fn('Sqrt', [ce.number(value.radical)]);
+      if (isOne(rational)) terms.push(radical);
+      else {
+        const [n, d] = rational;
+        if (d === 1) {
+          if (n === 1) terms.push(radical);
+          else terms.push(ce._fn('Multiply', [ce.number(n), radical]));
+        } else {
+          if (n === 1) terms.push(ce._fn('Divide', [radical, ce.number(d)]));
+          else
+            terms.push(
+              ce._fn('Divide', [
+                ce._fn('Multiply', [ce.number(n), radical]),
+                ce.number(d),
+              ])
+            );
+        }
+      }
+    }
+  }
+
+  let result: BoxedExpression;
+
+  if (value.im === 0) {
+    if (terms.length === 0) return ce.Zero;
+    result = terms.length === 1 ? terms[0] : canonicalMultiply(ce, terms);
+    return sign < 0 ? result.neg() : result;
+  }
+
+  //
+  // Imaginary Part
+  //
+  if (terms.length === 0) return ce.number(ce.complex(0, value.im));
+
+  result = terms.length === 1 ? terms[0] : canonicalMultiply(ce, terms);
+  return canonicalAdd(ce, [
+    sign < 0 ? result.neg() : result,
+    ce.number(ce.complex(0, value.im)),
+  ]);
 }

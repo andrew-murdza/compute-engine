@@ -13,23 +13,18 @@ export type {
   MathJsonSymbol,
   MathJsonString,
   MathJsonFunction,
-  MathJsonDictionary,
   MathJsonIdentifier,
-} from './math-json/math-json-format';
+} from './math-json/types';
 
 export {
   isSymbolObject,
   isStringObject,
   isFunctionObject,
-  isDictionaryObject,
   stringValue as getStringValue,
-  head,
-  headName,
+  operator,
+  operand,
   symbol,
-  applyRecursively,
   mapArgs,
-  op,
-  nops,
   dictionary as getDictionary,
 } from './math-json/utils';
 

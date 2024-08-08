@@ -1,7 +1,7 @@
 import { each, isFiniteIndexableCollection } from '../collection-utils';
 import { IComputeEngine, BoxedDomain, DomainLiteral, Hold } from '../public';
-import { flattenOps, flattenSequence } from '../symbolic/flatten';
-import { canonical, shouldHold } from '../symbolic/utils';
+import { flatten } from '../symbolic/flatten';
+import { shouldHold } from '../symbolic/utils';
 import { BoxedExpression } from './public';
 
 /**
@@ -13,11 +13,8 @@ export function checkArity(
   ce: IComputeEngine,
   ops: ReadonlyArray<BoxedExpression>,
   count: number
-  // { flatten } = { flatten: true }
 ): ReadonlyArray<BoxedExpression> {
-  ops = canonical(ops);
-  // if (flatten) ops = flattenSequence(ops);
-  ops = flattenSequence(ops);
+  ops = flatten(ops);
 
   // @fastpath
   if (!ce.strict) return ops;
@@ -49,18 +46,19 @@ export function checkArity(
  *
  * We also assume that the function is threadable.
  *
- * Converts the arguments to canonical, and flattens the sequence.
+ * The arguments are made canonical.
+ *
+ * Flattens sequence expressions.
  */
 export function checkNumericArgs(
   ce: IComputeEngine,
   ops: ReadonlyArray<BoxedExpression>,
-  options?: number | { count?: number; flatten?: boolean | string }
+  options?: number | { count?: number; flatten?: string }
 ): ReadonlyArray<BoxedExpression> {
   let count = typeof options === 'number' ? options : options?.count;
-  const flatten = typeof options === 'number' || (options?.flatten ?? true);
-  ops = canonical(ops);
-  if (flatten) ops = flattenSequence(ops);
-  if (typeof flatten === 'string') flattenOps(ops, flatten);
+  const flattenHead =
+    typeof options === 'number' ? undefined : options?.flatten;
+  ops = flatten(ops, flattenHead);
 
   // @fastpath
   if (!ce.strict) {
@@ -152,7 +150,7 @@ export function checkDomain(
   if (arg === undefined || arg === null) return ce.error('missing');
   if (dom === undefined) return ce.error('unexpected-argument', arg);
   arg = arg.canonical;
-  if (arg.head === 'Sequence') arg = arg.op1;
+  if (arg.operator === 'Sequence') arg = arg.op1;
   if (!arg.isValid) return arg;
   if (!arg.domain || arg.domain.isCompatible(dom)) return arg;
   return ce.domainError(dom, arg.domain, arg);
@@ -286,6 +284,7 @@ export function adjustArguments(
     }
     if (shouldHold(hold, params.length, i)) {
       result.push(op);
+      i += 1;
       continue;
     }
     if (!op.isValid) {
@@ -303,6 +302,7 @@ export function adjustArguments(
     }
     if (threadable && isFiniteIndexableCollection(op)) {
       result.push(op);
+      i += 1;
       continue;
     }
     if (
@@ -312,6 +312,7 @@ export function adjustArguments(
       // There was an inferred domain, and it is contravrariant with Numbers
       // e.g. "Anything". We'll narrow it down to Number when we infer later.
       result.push(op);
+      i += 1;
       continue;
     }
     if (!op.domain.isCompatible(param)) {

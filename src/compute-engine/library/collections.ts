@@ -253,7 +253,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
         const [key, value] = checkDomains(ce, args, [ce.Strings, 'Values']);
         if (!key.isValid || !value.isValid)
           return ce._fn('KeyValuePair', [key, value]);
-        return ce.tuple([key, value]);
+        return ce.tuple(key, value);
       },
     },
     size: (_expr) => 1,
@@ -264,7 +264,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
     complexity: 8200,
     signature: {
       domain: ['FunctionOf', 'Anything', 'Tuples'],
-      canonical: (ce, ops) => ce.tuple(checkArity(ce, ops, 1)),
+      canonical: (ce, ops) => ce.tuple(...checkArity(ce, ops, 1)),
     },
     size: (expr) => expr.nops!,
     at: (expr, index) => {
@@ -278,7 +278,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
     complexity: 8200,
     signature: {
       domain: ['FunctionOf', 'Anything', 'Anything', 'Tuples'],
-      canonical: (ce, ops) => ce.tuple(checkArity(ce, ops, 2)),
+      canonical: (ce, ops) => ce.tuple(...checkArity(ce, ops, 2)),
     },
     size: (expr) => expr.nops!,
     at: (expr, index) =>
@@ -290,7 +290,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
     complexity: 8200,
     signature: {
       domain: ['FunctionOf', 'Anything', 'Anything', 'Anything', 'Tuples'],
-      canonical: (ce, ops) => ce.tuple(checkArity(ce, ops, 3)),
+      canonical: (ce, ops) => ce.tuple(...checkArity(ce, ops, 3)),
     },
     size: (expr) => expr.nops!,
     at: (expr, index) =>
@@ -302,7 +302,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
     complexity: 8200,
     signature: {
       domain: ['FunctionOf', 'Anything', ['VarArg', 'Anything'], 'Tuples'],
-      canonical: (ce, ops) => ce.tuple(canonical(ops)),
+      canonical: (ce, ops) => ce.tuple(...ops),
     },
     size: (expr) => expr.nops!,
     at: (expr, index) =>
@@ -412,7 +412,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
             const val = def.at(ops[0], i);
             if (val) result.push(val);
           }
-        return ce.box(['List', ...result]);
+        return ce.function('List', result);
       },
     },
   },
@@ -558,7 +558,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
         const result: BoxedExpression[] = [];
         for (const op of collection) result.push(fn([op]) ?? ce.Nothing);
 
-        const h = ops[0].head;
+        const h = ops[0].operator;
         const newHead =
           {
             List: 'List',
@@ -603,7 +603,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
         for (const op of each(collection))
           if (fn([op])?.symbol === 'True') result.push(op);
 
-        const h = collection.head;
+        const h = collection.operator;
         const newHead =
           {
             List: 'List',
@@ -700,10 +700,10 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
       evaluate: (ce, ops) => {
         if (!isFiniteCollection(ops[0])) return undefined;
         const [values, counts] = tally(ops[0]!);
-        return ce.tuple([
+        return ce.tuple(
           ce.function('List', values),
-          ce.function('List', counts),
-        ]);
+          ce.function('List', counts)
+        );
       },
     },
   },
@@ -775,7 +775,7 @@ export const COLLECTIONS_LIBRARY: IdentifierDefinitions = {
         for (const op of ops) {
           if (op.nops === 0) values.push(op);
           else {
-            if (op.head !== 'Set') isSet = false;
+            if (op.operator !== 'Set') isSet = false;
             values.push(...op.ops!);
           }
         }
@@ -880,7 +880,7 @@ function indexRangeArg(
   }
 
   // We may have a Tuple...
-  const h = op.head;
+  const h = op.operator;
   if (!h || typeof h !== 'string' || !/^(Single|Pair|Triple|Tuple|)$/.test(h))
     return [0, 0, 0];
   let [lower, upper, step] = rangeArgs(op);
@@ -905,7 +905,7 @@ function take(
   const def = expr.functionDefinition;
   if (!def?.at) return ce.Nothing;
 
-  const list: SemiBoxedExpression = [];
+  const list: SemiBoxedExpression[] = [];
 
   for (const index of indexes) {
     const [lower, upper, step] = index;
@@ -922,7 +922,7 @@ function take(
       }
     }
   }
-  return ce.box(['List', ...list]);
+  return ce.function('List', list);
 }
 
 function takeString(
@@ -968,7 +968,7 @@ function canonicalList(
   // \left\lbrack \begin{array}...\end{array} \right\rbrack
 
   const op1 = ops[0];
-  if (ops.length === 1 && op1.head === 'Matrix') {
+  if (ops.length === 1 && op1.operator === 'Matrix') {
     // Adjust the matrix to have the correct delimiter
     const [body, delimiters, columns] = op1.ops!;
 
@@ -979,14 +979,14 @@ function canonicalList(
   }
 
   ops = ops.map((op) => {
-    if (op.head === 'Delimiter') {
-      if (op.op1.head === 'Sequence')
-        return ce.box(['List', ...canonical(op.op1.ops!)]);
-      return ce.box(['List', op.op1?.canonical ?? ce.Nothing]);
+    if (op.operator === 'Delimiter') {
+      if (op.op1.operator === 'Sequence')
+        return ce._fn('List', canonical(ce, op.op1.ops!));
+      return ce._fn('List', [op.op1?.canonical ?? ce.Nothing]);
     }
     return op.canonical;
   });
-  return ce.box(['List', ...ops]);
+  return ce._fn('List', ops);
 }
 
 function canonicalSet(
@@ -999,7 +999,7 @@ function canonicalSet(
 
   for (const op of ops) if (!has(op)) set.push(op);
 
-  return ce.function('Set', set, { canonical: false });
+  return ce._fn('Set', set);
 }
 
 function collectionFunction(

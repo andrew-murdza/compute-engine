@@ -1,6 +1,6 @@
 import Complex from 'complex.js';
 import Decimal from 'decimal.js';
-import { Expression } from '../../math-json/math-json-format';
+import { Expression } from '../../math-json/types';
 import { functionDomain } from '../domain-utils';
 import {
   ancestors,
@@ -201,7 +201,7 @@ export class _BoxedDomain extends _BoxedExpression implements BoxedDomain {
     return null;
   }
 
-  get head(): string {
+  get operator(): string {
     return 'Domain';
   }
 
